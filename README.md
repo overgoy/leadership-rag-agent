@@ -333,10 +333,23 @@ B-Tree indexes on `role`, `department`, `role_category`, `company`; an FTS5 virt
 
 ## Data fixtures
 
-`make collect URL=https://meetcampfire.com/` produces a clean fixture of Campfire's
-leadership (founders + heads), correctly excluding board members and customers quoted in
-case studies. The SQLite database itself (`data/company_data.db`) is git-ignored as a
-generated artifact; regenerate it with a single `make collect`.
+A pre-collected dataset is **committed** at `data/company_data.db` so the project is
+clone-and-go — you can `make chat` and query immediately without any API keys. It
+contains both example companies (`meetcampfire.com` and `robinhood.com`), with
+enriched bios (used by FTS5) and locations where the source pages stated them, and
+correctly excludes board members and customers quoted in case studies.
+
+Regenerate or extend it anytime:
+
+```bash
+make collect DOMAIN=meetcampfire.com
+make collect DOMAIN=robinhood.com
+```
+
+(The DB's transient `-wal`/`-shm` sidecars stay git-ignored.) Notes: `location`
+coverage depends on what each page states, and `linkedin_url` is typically empty by
+design — we ingest Tavily's extracted *text*, not raw HTML anchors (see the security
+rationale above), so profile hrefs usually aren't present to bind.
 
 ---
 

@@ -8,11 +8,13 @@ __pycache__/
 # Secrets — never commit real keys (use .env.example as the template)
 .env
 
-# Generated database + SQLite WAL/SHM sidecars (keep data/.gitkeep)
+# Generated databases + SQLite WAL/SHM sidecars...
 *.db
 *.db-wal
 *.db-shm
 *.db-journal
+# ...except the committed example fixture (meetcampfire + robinhood dataset).
+!data/company_data.db
 
 # Editors / OS
 .idea/

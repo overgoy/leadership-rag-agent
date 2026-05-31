@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import litellm
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from tavily import TavilyClient
 
 from src import database
@@ -102,6 +102,33 @@ class Leader(BaseModel):
     bio: Optional[str] = Field(None, description="Short free-text profile / background")
     linkedin_url: Optional[str] = None
 
+    @field_validator(
+        "role",
+        "role_category",
+        "department",
+        "location",
+        "bio",
+        "linkedin_url",
+        mode="before",
+    )
+    @classmethod
+    def _placeholder_to_none(cls, value):
+        """Coerce empty/placeholder strings the model sometimes emits (e.g. the
+        literal 'null', 'N/A', 'unknown') into a real None, so the stored data is
+        clean rather than carrying sentinel text (§3)."""
+        if isinstance(value, str) and value.strip().lower() in {
+            "",
+            "null",
+            "none",
+            "n/a",
+            "na",
+            "unknown",
+            "not specified",
+            "not available",
+        }:
+            return None
+        return value
+
 
 class LeadershipExtraction(BaseModel):
     """Container for the model's structured output."""
@@ -135,9 +162,26 @@ _EXTRACTION_SYSTEM = (
     "Set role_category to exactly one of 'C-Level', 'VP', or 'Head' based on the\n"
     "person's title. If a person does not fit one of these tiers, omit them.\n"
     "</classification>\n"
+    "<fields>\n"
+    "Be analytical and thorough (greedy): capture EVERY qualifying leader on the\n"
+    "page and fill as many fields as the text supports.\n"
+    "- location: the city / region / country where the person is based. If their\n"
+    "  individual location is not stated, fall back to the company's HEADQUARTERS\n"
+    "  location when the page specifies it. Leave null only when the page contains\n"
+    "  no geographic information at all.\n"
+    "- bio: synthesize a concise 2-3 sentence professional summary from the\n"
+    "  surrounding text — responsibilities, background, prior roles, tenure,\n"
+    "  notable facts. Do NOT emit generic placeholders like 'Executive at the\n"
+    "  company'; if the text has no substantive detail about the person, leave bio\n"
+    "  null.\n"
+    "- linkedin_url: extract a LinkedIn profile URL ONLY if it clearly belongs to\n"
+    "  THIS executive (from a linked anchor or the text). Never guess or construct\n"
+    "  a URL; leave null if absent.\n"
+    "</fields>\n"
     "<rules>\n"
-    "- Only use facts present in the provided text; never invent people or bios.\n"
-    "- Leave any unknown field null rather than guessing.\n"
+    "- Ground everything in the provided text; never invent people, titles, or\n"
+    "  facts. Summarizing present text into a bio is allowed; fabrication is not.\n"
+    "- Follow the <fields> guidance for location, bio, and linkedin_url.\n"
     "- Return an empty list if the text contains no qualifying leaders.\n"
     "</rules>"
 )
