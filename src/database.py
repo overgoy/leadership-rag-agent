@@ -135,11 +135,52 @@ def _connect(read_only: bool = False) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the initial release. Older databases are upgraded in place
+# (`CREATE TABLE IF NOT EXISTS` never alters an existing table). ALTER defaults
+# must be constant — CURRENT_TIMESTAMP isn't allowed there — so the timestamp
+# columns are added bare and backfilled below.
+_MIGRATIONS = (
+    ("is_active", "ALTER TABLE leadership ADD COLUMN is_active INTEGER DEFAULT 1"),
+    ("created_at", "ALTER TABLE leadership ADD COLUMN created_at TIMESTAMP"),
+    ("valid_from", "ALTER TABLE leadership ADD COLUMN valid_from TIMESTAMP"),
+)
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add post-release columns to a pre-existing ``leadership`` table so older
+    databases upgrade in place instead of erroring when newer indexes/queries
+    reference the missing columns. Idempotent — a no-op on a current schema.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='leadership'"
+    ).fetchone()
+    if not exists:
+        return  # brand-new database — _SCHEMA below creates the full table
+
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(leadership)")}
+    for column, ddl in _MIGRATIONS:
+        if column not in have:
+            conn.execute(ddl)
+    # Backfill timestamps for rows that predate these columns (idempotent).
+    conn.execute(
+        "UPDATE leadership SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"
+    )
+    conn.execute(
+        "UPDATE leadership SET valid_from = CURRENT_TIMESTAMP WHERE valid_from IS NULL"
+    )
+
+
 def init_db() -> None:
-    """Create the schema, FTS5 table, triggers, and indexes; enable WAL."""
+    """Create the schema, FTS5 table, triggers, and indexes; enable WAL.
+
+    Runs an idempotent in-place migration first so a database created by an older
+    version of the schema gains the newer columns before the new indexes that
+    reference them are (re)created.
+    """
     conn = _connect(read_only=False)
     try:
         conn.execute("PRAGMA journal_mode=WAL;")  # §3 concurrent read/write
+        _migrate_schema(conn)  # upgrade older DBs before new indexes are built
         conn.executescript(_SCHEMA)
         conn.commit()
     finally:
