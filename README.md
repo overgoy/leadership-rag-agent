@@ -146,6 +146,38 @@ while the read-only connection is the hard backstop that holds even if the guard
 bypassed. Errors are returned (not raised) wrapped in `<error>` tags so the agent can
 read the failure and fix its own SQL.
 
+### 5. Scaling & observability architecture
+
+The pipeline is built to scale to large domains and to be measurable in production.
+
+**Bounded concurrency with backoff.** Page mining is the slow part of collection, and
+each page is independent and network-bound (it waits on LLM calls). We fan those out
+across a `ThreadPoolExecutor` so their latency overlaps — but the pool is deliberately
+**bounded** (`MAX_WORKERS`, default 8). Unbounded concurrency would trip provider rate
+limits; a bounded pool is the back-pressure mechanism. On top of that, every LLM call
+sets `num_retries=3` with litellm's `retry_strategy="exponential_backoff_retry"`, so
+transient errors and **HTTP 429** rate limits are retried with increasing delays rather
+than failing the run. A single page that still fails is logged and skipped — it cannot
+abort the whole collection.
+
+**One atomic write, not many small ones.** Worker threads never touch the database.
+They return their results to the main thread, which performs a single
+`replace_company()` — a `DELETE` + bulk `INSERT` inside **one transaction** on one
+connection. This avoids the classic SQLite *"database is locked"* contention you get
+from many threads issuing small concurrent commits, and makes a re-scrape atomic: the
+old rows are never visible-as-deleted without the new rows replacing them.
+
+**Telemetry as a first-class table.** Every `make collect` run records a row in a
+dedicated `system_metrics` table — `duration_seconds`, `pages_mined`,
+`candidates_extracted`, `candidates_verified`, `tokens_used`, and
+`estimated_cost_usd` (computed via `litellm.completion_cost`). Keeping metrics in their
+own table (not mixed into `leadership`, and excluded from the agent's pruned schema)
+means observability never pollutes the Text-to-SQL context. The Streamlit
+**System Insights & Dashboard** view then reads this table through the same read-only
+connection to surface KPI cards (total LLM cost, scraper success rate, total records)
+and diagnostic `st.bar_chart`s (runtime by company, leadership distribution by
+category) — turning the pipeline into something you can actually monitor and cost-track.
+
 ### Other notable decisions
 - **Trustworthy provenance.** `company` and `source_url` are attached server-side (never
   taken from the model), so citations can't be hallucinated.
@@ -178,7 +210,47 @@ Results are written into page-ordered slots, so the subsequent dedupe ("first oc
 wins") stays **deterministic regardless of completion order**. A single failing page is
 logged and skipped — it can't abort the whole run. The pool size is bounded
 (`MAX_WORKERS`, default 8, override via `SCRAPER_MAX_WORKERS`) to respect API rate
-limits.
+limits, and each LLM call retries 429s with exponential backoff. The threads return
+their results to the main thread, which commits them in **one atomic transaction**
+(`replace_company`) to avoid SQLite lock contention.
+
+Each run also writes a `system_metrics` row (duration, pages, candidates extracted vs.
+verified, tokens, estimated USD cost), surfaced in the dashboard below.
+
+---
+
+## System Insights & Dashboard
+
+The Streamlit app has two views, switchable from the sidebar radio:
+
+- **💬 Chat Assistant** — the Text-to-SQL agent described above.
+- **📊 System Insights & Dashboard** — observability over all collection runs:
+  - **KPI cards** (`st.metric`): Total Infrastructure Cost (aggregated LLM spend),
+    Scraper Success Rate (verified ÷ extracted), Total Records, and LLM Tokens.
+  - **Diagnostic charts** (`st.bar_chart`): pipeline runtime by company, and leadership
+    distribution by role category.
+  - A **recent-runs table** of the raw `system_metrics` rows.
+
+All dashboard data is read through the same read-only connection as the agent.
+
+---
+
+## Deployment (optional)
+
+Local execution via `make chat` is the primary path. For cloud hosting, a `Dockerfile`
+is included:
+
+```bash
+docker build -t leadership-agent .
+docker run -p 8501:8501 \
+  -e OPENAI_API_KEY=... -e TAVILY_API_KEY=... \
+  -v "$(pwd)/data:/app/data" \
+  leadership-agent
+```
+
+It runs Streamlit headless on port 8501 with a health-check against
+`/_stcore/health`. Mount `data/` as a volume to provide (or persist) the SQLite
+database; secrets are passed as environment variables, never baked into the image.
 
 ---
 
@@ -308,6 +380,8 @@ real LLM or the network.
 ├── .streamlit/          # Streamlit config (telemetry off)
 ├── requirements.txt
 ├── .env.example         # template for API keys
-├── session.json         # how this was built with Claude Code (deliverable)
+├── Dockerfile           # optional: containerized deploy of the Streamlit app
+├── pyproject.toml       # ruff lint/format configuration
+├── session.json         # Claude Code build export (tracked deliverable)
 └── Makefile
 ```

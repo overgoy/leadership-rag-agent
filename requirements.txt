@@ -11,6 +11,7 @@ python-dotenv>=1.0.0     # Load API keys from .env
 
 # UI
 streamlit>=1.35.0        # Chat interface, st.write_stream, st.session_state
+pandas>=2.0.0            # Dashboard charts (st.bar_chart) and run tables
 
 # NOTE: sqlite3 + FTS5 ship with the Python 3.11+ standard library (no pip install).
 

@@ -39,6 +39,17 @@ _LEADER_COLUMNS = (
     "source_url",
 )
 
+# Columns written per collection run into ``system_metrics`` (observability).
+_METRIC_COLUMNS = (
+    "company",
+    "duration_seconds",
+    "pages_mined",
+    "candidates_extracted",
+    "candidates_verified",
+    "tokens_used",
+    "estimated_cost_usd",
+)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS leadership (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +61,10 @@ CREATE TABLE IF NOT EXISTS leadership (
     location      TEXT,                       -- where the person is based
     bio           TEXT,                       -- free-text profile, indexed by FTS5
     linkedin_url  TEXT,
-    source_url    TEXT                        -- provenance: where this was found
+    source_url    TEXT,                       -- provenance: where this was found
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- data vitality / freshness
+    is_active     INTEGER  DEFAULT 1,         -- 1 = current, 0 = soft-deleted (historical)
+    valid_from    TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- when this record became current
 );
 
 -- B-Tree indexes on the heavily filtered columns (.claudecode.md §2).
@@ -82,6 +96,23 @@ CREATE TRIGGER IF NOT EXISTS leadership_au AFTER UPDATE ON leadership BEGIN
         VALUES ('delete', old.id, old.name, old.bio);
     INSERT INTO leadership_fts(rowid, name, bio) VALUES (new.id, new.name, new.bio);
 END;
+
+-- Observability: one row per `make collect` run, capturing performance and
+-- FinOps data (.claudecode.md §3/§5). Kept separate from the agent's schema so
+-- it never pollutes the Text-to-SQL context (the dashboard queries it directly).
+CREATE TABLE IF NOT EXISTS system_metrics (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    company              TEXT,
+    created_at           TEXT DEFAULT (datetime('now')),  -- UTC run timestamp
+    duration_seconds     REAL,     -- wall-clock for the collection run
+    pages_mined          INTEGER,  -- pages returned by search and mined
+    candidates_extracted INTEGER,  -- raw leaders proposed by the extraction model
+    candidates_verified  INTEGER,  -- survivors of scope + board + employment checks
+    tokens_used          INTEGER,  -- total LLM tokens (extraction + verification)
+    estimated_cost_usd   REAL      -- litellm cost estimate for those tokens
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_company ON system_metrics(company);
 """
 
 
@@ -148,6 +179,61 @@ def clear_company(company: str) -> int:
         conn.close()
 
 
+def replace_company(company: str, leaders: Sequence[Mapping[str, Any]]) -> int:
+    """Atomically refresh a company's leaders in ONE transaction, preserving
+    history via a **soft delete**.
+
+    Rather than hard-deleting, we flag the company's existing current rows as
+    ``is_active = 0`` (historical) and INSERT the freshly extracted leaders as
+    ``is_active = 1`` (current). This keeps an audit trail of who joined or left
+    across re-scrapes. The scraper mines pages on many threads but writes once,
+    here — doing the soft-delete + bulk INSERT in a single transaction on a single
+    connection (instead of many small commits from worker threads) keeps the write
+    atomic and avoids SQLite "database is locked" contention (.claudecode.md §3).
+    Returns the number of new current rows inserted.
+    """
+    columns = ", ".join(_LEADER_COLUMNS)
+    placeholders = ", ".join(f":{c}" for c in _LEADER_COLUMNS)
+    insert_sql = f"INSERT INTO leadership ({columns}) VALUES ({placeholders})"
+    rows = [{c: dict(leader).get(c) for c in _LEADER_COLUMNS} for leader in leaders]
+
+    conn = _connect(read_only=False)
+    try:
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE leadership SET is_active = 0 WHERE company = ? AND is_active = 1",
+            (company,),
+        )
+        if rows:
+            conn.executemany(insert_sql, rows)  # is_active defaults to 1 (current)
+        conn.commit()
+        return len(rows)
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def insert_metrics(metrics: Mapping[str, Any]) -> None:
+    """Record one collection run's performance/FinOps metrics (§3/§5).
+
+    Accepts a plain mapping; unknown keys are ignored and missing keys become
+    NULL, mirroring ``insert_leaders``. ``created_at`` defaults in the schema.
+    """
+    columns = ", ".join(_METRIC_COLUMNS)
+    placeholders = ", ".join(f":{c}" for c in _METRIC_COLUMNS)
+    sql = f"INSERT INTO system_metrics ({columns}) VALUES ({placeholders})"
+    row = {c: dict(metrics).get(c) for c in _METRIC_COLUMNS}
+
+    conn = _connect(read_only=False)
+    try:
+        conn.execute(sql, row)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_schema() -> str:
     """Return the pruned ``leadership`` table DDL for the LLM context.
 
@@ -167,10 +253,14 @@ def get_schema() -> str:
     return (
         f"{ddl}\n\n"
         "-- role_category is one of: 'C-Level', 'VP', 'Head'.\n"
+        "-- HISTORY: rows are soft-deleted across re-scrapes. is_active = 1 is the\n"
+        "--   current leadership; is_active = 0 is historical. ALWAYS filter\n"
+        "--   WHERE is_active = 1 for present-day questions; only include inactive\n"
+        "--   rows when the user explicitly asks about history / past leaders.\n"
         "-- For semantic/context search over bios, use the FTS5 table, e.g.:\n"
         "--   SELECT l.* FROM leadership l\n"
         "--   JOIN leadership_fts f ON f.rowid = l.id\n"
-        "--   WHERE leadership_fts MATCH 'marketing growth';"
+        "--   WHERE leadership_fts MATCH 'marketing growth' AND l.is_active = 1;"
     )
 
 

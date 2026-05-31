@@ -18,8 +18,10 @@ raw text is truncated to 15k chars, and litellm uses ``num_retries=3``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from urllib.parse import urlparse
@@ -32,6 +34,14 @@ from tavily import TavilyClient
 from src import database
 
 load_dotenv()
+
+# Structured logging instead of bare prints, so collection runs emit timestamped,
+# level-tagged records (works cleanly under `make collect` and in containers).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # §5 FinOps: cost-effective "mini" model by default; overridable via env.
 EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
@@ -153,10 +163,30 @@ class _Verification(BaseModel):
     reason: Optional[str] = None
 
 
-def verify_employment(name: str, role: Optional[str], text: str, company: str) -> bool:
+def _usage(resp) -> tuple[int, float]:
+    """Extract (total_tokens, estimated_cost_usd) from a litellm response for the
+    observability layer (§5 FinOps). Best-effort — never raises, since metrics
+    must not be able to break a collection run."""
+    try:
+        tokens = int(resp.usage.total_tokens or 0)
+    except Exception:  # noqa: BLE001
+        tokens = 0
+    try:
+        cost = float(litellm.completion_cost(completion_response=resp) or 0.0)
+    except Exception:  # noqa: BLE001 — unknown model / pricing → treat as 0
+        cost = 0.0
+    return tokens, cost
+
+
+def verify_employment(
+    name: str, role: Optional[str], text: str, company: str
+) -> tuple[bool, int, float]:
     """Skeptical second pass: confirm a candidate actually works at the target
     company before storing them. Fails open (keeps the candidate) on LLM error so
-    a transient failure never silently drops a real leader."""
+    a transient failure never silently drops a real leader.
+
+    Returns ``(works_at_target, tokens_used, cost_usd)`` so the caller can roll
+    the verification spend into the run's metrics."""
     snippet = text[:MAX_TEXT_CHARS]
     user_msg = (
         f"<company>{company}</company>\n"
@@ -174,17 +204,19 @@ def verify_employment(name: str, role: Optional[str], text: str, company: str) -
                 {"role": "user", "content": user_msg},
             ],
             response_format=_Verification,
-            num_retries=3,
+            num_retries=3,  # §3: retry transient errors / HTTP 429 rate limits
+            retry_strategy="exponential_backoff_retry",  # back off on 429s
             max_tokens=VERIFY_MAX_TOKENS,
             temperature=0,
         )
+        tokens, cost = _usage(resp)
         verdict = _Verification.model_validate_json(
             resp.choices[0].message.content or "{}"
         )
-        return verdict.works_at_target
+        return verdict.works_at_target, tokens, cost
     except Exception as exc:  # noqa: BLE001 — keep on error (fail open)
-        print(f"  ! verification error for {name}: {exc}", file=sys.stderr)
-        return True
+        logger.warning("verification error for %s: %s", name, exc)
+        return True, 0, 0.0
 
 
 def _company_from_url(url: str) -> str:
@@ -226,19 +258,30 @@ def search_company(company: str) -> list[dict]:
 
     pages = _run(include_domains=[company])
     if not pages:
-        print(f"  (no pages on {company}; falling back to open search)")
+        logger.info("no pages on %s; falling back to open search", company)
         pages = _run(include_domains=None)
     return pages
 
 
-def extract_leaders(text: str, source_url: str, company: str) -> list[dict]:
+def extract_leaders(
+    text: str, source_url: str, company: str
+) -> tuple[list[dict], dict]:
     """Extract qualifying leaders from one page's text.
 
-    Returns DB-ready dicts. ``company`` and ``source_url`` are attached here (not
-    taken from the model) so provenance is trustworthy, never hallucinated (§2).
-    Returns an empty list on any model/validation error so one bad page can't
-    abort the whole collection (§3).
+    Returns ``(leaders, stats)``. ``leaders`` are DB-ready dicts; ``company`` and
+    ``source_url`` are attached here (not taken from the model) so provenance is
+    trustworthy, never hallucinated (§2). ``stats`` carries this page's metrics
+    (candidates proposed/verified, tokens, cost) for the observability layer.
+
+    On any model/validation error an empty result is returned so one bad page
+    can't abort the whole collection (§3).
     """
+    stats = {
+        "candidates_extracted": 0,
+        "candidates_verified": 0,
+        "tokens": 0,
+        "cost": 0.0,
+    }
     snippet = text[:MAX_TEXT_CHARS]
     user_msg = (
         f"<company>{company}</company>\n"
@@ -257,51 +300,65 @@ def extract_leaders(text: str, source_url: str, company: str) -> list[dict]:
                 {"role": "user", "content": user_msg},
             ],
             response_format=LeadershipExtraction,
-            num_retries=3,  # §3 stability
+            num_retries=3,  # §3: retry transient errors / HTTP 429 rate limits
+            retry_strategy="exponential_backoff_retry",  # back off on 429s
             max_tokens=EXTRACTION_MAX_TOKENS,
             temperature=0,
         )
+        tokens, cost = _usage(resp)
+        stats["tokens"] += tokens
+        stats["cost"] += cost
         content = resp.choices[0].message.content or "{}"
         extraction = LeadershipExtraction.model_validate(json.loads(content))
     except (ValidationError, json.JSONDecodeError, KeyError, IndexError) as exc:
-        print(f"  ! extraction failed for {source_url}: {exc}", file=sys.stderr)
-        return []
+        logger.warning("extraction failed for %s: %s", source_url, exc)
+        return [], stats
     except Exception as exc:  # network/LLM errors — skip this page, keep going
-        print(f"  ! LLM error for {source_url}: {exc}", file=sys.stderr)
-        return []
+        logger.warning("LLM error for %s: %s", source_url, exc)
+        return [], stats
 
+    stats["candidates_extracted"] = len(extraction.leaders)
     leaders: list[dict] = []
     for leader in extraction.leaders:
         if leader.role_category not in ROLE_CATEGORIES:
             continue  # enforce §2 scope even if the model over-includes
         if _is_board_role(leader.role):
             continue  # drop board/governance roles (§2)
-        if not verify_employment(leader.name, leader.role, snippet, company):
-            print(f"  - skipped (not {company}): {leader.name} ({leader.role})")
+        ok, tokens, cost = verify_employment(leader.name, leader.role, snippet, company)
+        stats["tokens"] += tokens
+        stats["cost"] += cost
+        if not ok:
+            logger.info("skipped (not %s): %s (%s)", company, leader.name, leader.role)
             continue  # skeptical second pass: not an employee of the target
         row = leader.model_dump()
         row["company"] = company
         row["source_url"] = source_url
         leaders.append(row)
-    return leaders
+
+    stats["candidates_verified"] = len(leaders)
+    return leaders, stats
 
 
 def collect(url: str) -> int:
     """End-to-end collection for a company URL. Initializes the DB, replaces any
-    existing rows for this company, and inserts freshly extracted leaders.
-    Returns the number of leaders stored."""
+    existing rows for this company in one atomic transaction, and records run
+    metrics. Returns the number of leaders stored."""
     company = _company_from_url(url)
-    print(f"Collecting leadership for: {company}")
+    logger.info("Collecting leadership for: %s", company)
+    started = time.perf_counter()
 
     database.init_db()
     pages = search_company(company)
-    print(f"  found {len(pages)} pages to mine")
+    logger.info("found %d pages to mine", len(pages))
 
     # Mine pages concurrently (§3 scalability). Each page's extraction +
     # employment verification is an independent, network-bound unit of work, so
-    # threads overlap their LLM latency. Results are kept in page order (indexed
-    # slots) so dedupe stays deterministic regardless of completion order.
+    # threads overlap their LLM latency. Bounded by MAX_WORKERS to stay within API
+    # rate limits; per-call litellm retries handle transient 429s with backoff.
+    # Results are kept in page order (indexed slots) so dedupe stays deterministic
+    # regardless of completion order.
     per_page: list[list[dict]] = [[] for _ in pages]
+    page_stats: list[dict] = [{} for _ in pages]
     if pages:
         with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(pages))) as pool:
             futures = {
@@ -311,9 +368,9 @@ def collect(url: str) -> int:
             for future in as_completed(futures):
                 idx = futures[future]
                 try:
-                    per_page[idx] = future.result()
+                    per_page[idx], page_stats[idx] = future.result()
                 except Exception as exc:  # one bad page can't abort the run (§3)
-                    print(f"  ! page mining failed: {exc}", file=sys.stderr)
+                    logger.warning("page mining failed: %s", exc)
 
     # Dedupe by name in page order — first occurrence wins.
     seen: set[str] = set()
@@ -325,16 +382,41 @@ def collect(url: str) -> int:
                 seen.add(key)
                 collected.append(leader)
 
-    database.clear_company(company)  # idempotent re-scrape
-    inserted = database.insert_leaders(collected)
-    print(f"  stored {inserted} leaders for {company}")
+    # One atomic write from the main thread (§3): DELETE + bulk INSERT in a single
+    # transaction, instead of many small commits from worker threads.
+    inserted = database.replace_company(company, collected)
+    logger.info("stored %d leaders for %s", inserted, company)
+
+    # Telemetry: roll up per-page stats and record one metrics row for this run.
+    duration = time.perf_counter() - started
+    metrics = {
+        "company": company,
+        "duration_seconds": round(duration, 3),
+        "pages_mined": len(pages),
+        "candidates_extracted": sum(
+            s.get("candidates_extracted", 0) for s in page_stats
+        ),
+        "candidates_verified": sum(s.get("candidates_verified", 0) for s in page_stats),
+        "tokens_used": sum(s.get("tokens", 0) for s in page_stats),
+        "estimated_cost_usd": round(sum(s.get("cost", 0.0) for s in page_stats), 6),
+    }
+    database.insert_metrics(metrics)
+    logger.info(
+        "metrics: %d pages, %d candidates -> %d verified, %d tokens, $%.6f, %.3fs",
+        metrics["pages_mined"],
+        metrics["candidates_extracted"],
+        metrics["candidates_verified"],
+        metrics["tokens_used"],
+        metrics["estimated_cost_usd"],
+        metrics["duration_seconds"],
+    )
     return inserted
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
-        print("Usage: python -m src.scraper <company_url>", file=sys.stderr)
+        logger.error("Usage: python -m src.scraper <company_url>")
         return 2
     collect(argv[0])
     return 0

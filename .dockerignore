@@ -1,0 +1,14 @@
+# Keep the image lean and free of secrets / local artifacts.
+.git/
+.idea/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/
+.env
+tests/
+conftest.py
+session.json
+*.md

@@ -28,16 +28,24 @@ FinOps (.claudecode.md §5): a cost-effective "mini" model by default, bounded
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 
 import litellm
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
 from src import database
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # §5 FinOps: default to a cost-effective model; override via env for harder runs.
 AGENT_MODEL = os.getenv("AGENT_MODEL", "gpt-4o-mini")
@@ -286,8 +294,8 @@ def _render_steps(steps: list[dict]) -> None:
                         st.dataframe(result["rows"], use_container_width=True)
 
 
-def main() -> None:
-    st.set_page_config(page_title="Company Leadership Agent", page_icon="🧭")
+def render_chat() -> None:
+    """The 'Chat Assistant' view: the ReAct Text-to-SQL agent."""
     st.title("🧭 Company Leadership Agent")
     st.caption(
         "Ask about company executives. Answers are grounded in a local SQLite "
@@ -322,6 +330,7 @@ def main() -> None:
         try:
             answer = st.write_stream(run_agent(history, steps))  # §3 token streaming
         except Exception as exc:  # noqa: BLE001 — surface, never crash the UI (§3)
+            logger.exception("agent run failed")
             answer = f"Sorry, something went wrong: {exc}"
             st.markdown(answer)
 
@@ -337,6 +346,91 @@ def main() -> None:
     st.session_state.messages.append(
         {"role": "assistant", "content": answer, "steps": steps}
     )
+
+
+def _query(sql: str) -> list[dict]:
+    """Run a read-only query for the dashboard, returning rows (or [] on error).
+
+    Goes through the same read-only ``execute_sql`` path as the agent (§4); the
+    dashboard's queries are static (no user input), so there's no injection risk.
+    """
+    result = database.execute_sql(sql)
+    return [] if "error" in result else result["rows"]
+
+
+def render_dashboard() -> None:
+    """The 'System Insights & Dashboard' view: pipeline + FinOps telemetry."""
+    st.title("📊 System Insights & Dashboard")
+    st.caption("Pipeline performance and FinOps telemetry across all collection runs.")
+
+    agg = _query(
+        "SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost, "
+        "COALESCE(SUM(tokens_used), 0) AS tokens, "
+        "COALESCE(SUM(candidates_verified), 0) AS verified, "
+        "COALESCE(SUM(candidates_extracted), 0) AS extracted "
+        "FROM system_metrics"
+    )[0]
+    records = _query("SELECT COUNT(*) AS n FROM leadership WHERE is_active = 1")[0]["n"]
+    extracted = agg["extracted"] or 0
+    success_rate = (agg["verified"] / extracted * 100) if extracted else 0.0
+
+    # KPI cards (§ observability).
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Infra Cost", f"${agg['cost']:,.4f}", help="Aggregated LLM spend")
+    c2.metric(
+        "Scraper Success Rate",
+        f"{success_rate:.0f}%",
+        help="Verified ÷ extracted candidates across all runs",
+    )
+    c3.metric("Total Records", f"{records:,}")
+    c4.metric("LLM Tokens", f"{agg['tokens']:,}")
+
+    runs = _query(
+        "SELECT company, created_at, duration_seconds, pages_mined, "
+        "candidates_extracted, candidates_verified, tokens_used, estimated_cost_usd "
+        "FROM system_metrics ORDER BY created_at"
+    )
+    if not runs:
+        st.info(
+            "No collection runs recorded yet. Run `make collect URL=...` to populate "
+            "telemetry."
+        )
+        return
+
+    # Diagnostic charts.
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Pipeline runtime by company")
+        runtimes = _query(
+            "SELECT company, ROUND(AVG(duration_seconds), 2) AS avg_seconds "
+            "FROM system_metrics GROUP BY company"
+        )
+        st.bar_chart(pd.DataFrame(runtimes).set_index("company"))
+    with right:
+        st.subheader("Leadership by role category")
+        dist = _query(
+            "SELECT role_category, COUNT(*) AS count FROM leadership "
+            "WHERE is_active = 1 GROUP BY role_category"
+        )
+        if dist:
+            st.bar_chart(pd.DataFrame(dist).set_index("role_category"))
+        else:
+            st.caption("No leadership records yet.")
+
+    with st.expander("Recent collection runs"):
+        st.dataframe(pd.DataFrame(runs), use_container_width=True, hide_index=True)
+
+
+def main() -> None:
+    st.set_page_config(page_title="Company Leadership Agent", page_icon="🧭")
+    view = st.sidebar.radio(
+        "View",
+        ("💬 Chat Assistant", "📊 System Insights & Dashboard"),
+    )
+    if view.startswith("📊"):
+        render_dashboard()
+    else:
+        render_chat()
 
 
 if __name__ == "__main__":
