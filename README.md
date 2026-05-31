@@ -290,7 +290,8 @@ make chat
 | `make install` | Create `venv/` and install `requirements.txt`. |
 | `make collect URL=<company_url>` | Scrape + extract + store leadership for one company. Idempotent (re-running replaces that company's rows). Defaults to `meetcampfire.com`. |
 | `make chat` | Launch the Streamlit chat app (headless) on port 8501. |
-| `make test` | Run the test suite (`pytest`). |
+| `make test` | Run the offline test suite (`pytest`). |
+| `make eval` | Run the live agent eval — the task's example questions through the real agent, checked against the DB (needs `OPENAI_API_KEY` + collected data). |
 
 ---
 
@@ -372,12 +373,16 @@ Environment variables (see `.env.example`):
 ```bash
 venv/bin/ruff check . --fix   # lint
 venv/bin/ruff format .        # format
-make test                     # run the tests (or: venv/bin/pytest)
+make test                     # offline unit tests (or: venv/bin/pytest)
+make eval                     # live agent eval against the real LLM + DB
 ```
 
 The test suite is offline and deterministic — it exercises the SQL layer (schema,
 FTS5, read-only enforcement) and the pure text/guard helpers, and never calls a
-real LLM or the network.
+real LLM or the network. `make eval` (`eval_agent.py`) complements it by running
+the task's example questions through the real agent and checking each answer
+against ground truth read from the database — kept out of `tests/` precisely so
+the unit suite stays offline.
 
 ## Project layout
 
@@ -390,6 +395,7 @@ real LLM or the network.
 │   └── app.py           # Streamlit chat UI + Text-to-SQL agent
 ├── tests/               # pytest: database, scraper, and agent helpers
 ├── conftest.py          # test fixtures (temp DB) + src/ import path
+├── eval_agent.py        # live agent eval (real LLM) — `make eval`
 ├── .streamlit/          # Streamlit config (telemetry off)
 ├── requirements.txt
 ├── .env.example         # template for API keys
