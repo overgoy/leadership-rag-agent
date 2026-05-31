@@ -111,20 +111,42 @@ def _build_system_prompt(schema: str) -> str:
         "and returns rows as JSON.\n"
         "</tools>\n"
         "<guardrails>\n"
-        "You ONLY help with questions about the company leadership in this "
-        "database (who holds which role, counts by role/department, locations, "
-        "bios, sources, etc.). If the user asks anything off-topic — general "
-        "knowledge, coding help, opinions, or anything unrelated to these leaders "
-        "— politely decline in one sentence, state what you can help with, and do "
-        "NOT call any tool.\n"
+        "You ONLY answer questions about the company leadership in this database — "
+        "who holds which role, counts by role/department, locations, "
+        "backgrounds/bios, sources, and statistics over that data. If a request is "
+        "unrelated to corporate leadership (e.g. recipes, general coding help, math, "
+        "trivia, opinions, or chit-chat), you MUST short-circuit on the FIRST step: "
+        "do NOT emit any execute_sql tool call, and politely refuse in one sentence "
+        "that states what you can help with.\n"
         "</guardrails>\n"
+        "<data_tips>\n"
+        "- ALWAYS match the text columns company, role, and name "
+        "case-insensitively and by fragment — NEVER with strict '='. Use "
+        "LOWER(col) LIKE '%value%' with a LOWERCASED value, e.g. "
+        "LOWER(company) LIKE '%robinhood%', LOWER(role) LIKE '%cto%', "
+        "LOWER(name) LIKE '%glasgow%'. This tolerates case differences, partial "
+        "names, and minor typos (e.g. 'СEO', 'Director', 'Robinhod').\n"
+        "- 'company' stores a DOMAIN (e.g. 'robinhood.com', 'meetcampfire.com'), not "
+        "a display name like 'Robinhood'; the lowercased LIKE fragment still matches "
+        "it. Run SELECT DISTINCT company FROM leadership WHERE is_active = 1 to see "
+        "available values.\n"
+        "- 'role' is free text (e.g. 'Co-founder / CTO', 'VP of Risk'). For tiers "
+        "prefer role_category ('C-Level','VP','Head'); for titles use "
+        "LOWER(role) LIKE '%cto%'. For bios use the FTS5 table "
+        "(leadership_fts MATCH ...).\n"
+        "- Rows are current when is_active = 1 (see the schema note).\n"
+        "</data_tips>\n"
         "<process>\n"
         "1. Reason step by step about the question and the SQL that answers it. "
         "Put this reasoning inside <thinking>...</thinking> tags.\n"
-        "2. Call execute_sql with a SELECT. Filter by role_category "
-        "('C-Level','VP','Head'), department, or company where relevant. For "
-        "keyword/semantic search over bios, JOIN leadership_fts with MATCH.\n"
-        "3. If a query returns an <error>, read it, fix the SQL, and retry.\n"
+        "2. Call execute_sql with a SELECT, using case-insensitive LIKE matching as "
+        "described above. For keyword/semantic search over bios, JOIN "
+        "leadership_fts with MATCH.\n"
+        "3. If a query returns an <error>, read it, fix the SQL, and retry. If it "
+        "returns ZERO rows, you will receive a <hint> listing the companies "
+        "currently in the database — use it to suggest the closest match in the "
+        "form \"I couldn't find anything for 'X'. Did you mean 'Y'?\" and list the "
+        "available companies, rather than just saying nothing was found.\n"
         "4. When you have enough data, write a concise plain-language answer and "
         "cite the source_url for each leader you mention so the user can verify.\n"
         "</process>\n"
@@ -170,6 +192,17 @@ def _run_tool(query: str) -> tuple[str, dict]:
             f"showing first {MAX_ROWS_TO_MODEL} of {result['row_count']} rows"
         )
     return json.dumps(payload, default=str), result
+
+
+def _active_companies() -> list[str]:
+    """Distinct current companies, for the agent's 'Did you mean?' suggestions."""
+    result = database.execute_sql(
+        "SELECT DISTINCT company FROM leadership "
+        "WHERE is_active = 1 AND company IS NOT NULL ORDER BY company"
+    )
+    if "error" in result:
+        return []
+    return [r["company"] for r in result["rows"] if r.get("company")]
 
 
 def _visible_answer(raw: str) -> str:
@@ -267,6 +300,19 @@ def run_agent(history: list[dict], steps: list[dict]):
             query = (args.get("query") or "").strip()
 
             content, raw = _run_tool(query)
+            # "Did you mean?" fallback: a successful query that matched nothing gets
+            # the list of available companies appended so the agent can suggest a
+            # correction instead of a dead-end "not found".
+            if "error" not in raw and raw.get("row_count") == 0:
+                companies = _active_companies()
+                if companies:
+                    content += (
+                        "\n<hint>That query matched 0 rows. Companies currently in "
+                        "the database (is_active = 1): " + ", ".join(companies) + ". "
+                        "If the user's term looks like a typo or near-match of one "
+                        'of these, suggest the correction ("Did you mean ...?") and '
+                        "list these companies.</hint>"
+                    )
             steps.append({"type": "sql", "query": query, "result": raw})
             messages.append(
                 {"role": "tool", "tool_call_id": call.id, "content": content}
@@ -313,7 +359,11 @@ def render_chat() -> None:
             st.markdown(msg["content"])
 
     prompt = st.chat_input("e.g. Who are the C-level executives at meetcampfire.com?")
-    if not prompt:
+    if prompt is None:
+        return  # nothing submitted this run
+    prompt = prompt.strip()
+    if not prompt:  # whitespace-only — don't fire the agent loop
+        st.warning("Please enter a valid question.")
         return
 
     st.session_state.messages.append({"role": "user", "content": prompt})

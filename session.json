@@ -2,7 +2,7 @@
   "project": "Company Leadership RAG Agent",
   "assistant": "Claude Code (Anthropic Opus 4.x)",
   "description": "Curated export of the Claude Code session used to build this project, showing the step-by-step collaboration loop. Secrets are redacted; internal chain-of-thought and verbose tool input/output are omitted, and tool calls are summarized to one line each.",
-  "turn_count": 264,
+  "turn_count": 304,
   "turns": [
     {
       "role": "user",
@@ -1615,6 +1615,246 @@
       "text": "Index in place, 49 tests green, ruff clean. Now regenerate `session.json` and verify it's secret-free:",
       "tools": [
         "Bash: Regenerate session.json and scan for secrets"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Commit index, test update, and regenerated session.json"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Finish line crossed. 🏁\n\n**Commit `990a34a`** — working tree clean.\n\n- ✅ **`idx_leadership_active`** added to `leadership(is_active)`, completing the §2 B-Tree index set (role, department, role_category, company, is_active). Confirmed present in a fresh DB.\n- ✅ **Test updated** — the index-set assertion now expects all 5; **49 tests still pass**, ruff clean.\n- ✅ **`session.json` regenerated** — 264 turns, capturing the final state, verified free of real-key-shaped tokens.\n\nNote: you interrupted `make collect for robinhood` before it ran, so I didn't execute it — the Robinhood fixture hasn't been collected. Say the word if you'd like me to run `make collect URL=https://robinhood.com/` now (it makes live Tavily + OpenAI calls and will write a `system_metrics` row you can view in the dashboard)."
+    },
+    {
+      "role": "user",
+      "text": "run make collect for robinhood"
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Collect leadership for robinhood.com"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The existing `data/company_data.db` was created earlier (meetcampfire run) under the *old* schema, so `CREATE TABLE IF NOT EXISTS` skips it and the new `is_active` index can't be built on the stale table. The DB is a git-ignored, regenerable artifact I created earlier — the clean fix is to remove the stale DB (and its WAL/SHM sidecars) and let `init_db` rebuild it on the current schema. Let me check and clear it:",
+      "tools": [
+        "Bash: Inspect and remove stale schema DB"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Stale DB removed (`.gitkeep` preserved). Now re-run the collection on the fresh schema:",
+      "tools": [
+        "Bash: Collect robinhood.com on fresh schema"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Collection succeeded — **11 leaders stored** for robinhood.com (6 pages, 13 candidates → 11 verified, 25.6k tokens, ~$0.0044, 17.5s). Let me inspect the result and confirm the new schema columns populated:",
+      "tools": [
+        "Bash: Inspect collected robinhood leaders and metrics"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "`make collect` for robinhood.com succeeded end-to-end. ✅\n\n**11 current leaders** stored, correctly tiered:\n\n| Tier | Count | People |\n|---|---|---|\n| C-Level | 4 | Cathy Southwick (CIO), John Castelly (CCO), Kelly Zigaitis & Norm Ashkenas (CCOs of subsidiaries) |\n| VP | 5 | Chris Koegel, Mark Seigle, Rich Jackson, Scott Friedman, Smeeta Ramarathnam |\n| Head | 2 | Jim Swartwout (Clearing Ops), Rich Cho (Recruiting) |\n\nAll new schema columns populated (`is_active=1`, `created_at` set on all 11), and a `system_metrics` row was logged (6 pages, 13→11 verified, 25.6k tokens, ~$0.0044) — so the dashboard will now show Robinhood telemetry alongside any future runs.\n\nTwo honest notes:\n- **One schema-migration gotcha surfaced:** the pre-existing `data/company_data.db` was built on the old schema, so `init_db` couldn't add the `is_active` index to it and errored. Since the DB is a git-ignored, regenerable artifact, I removed it and let the run rebuild on the current schema. (`CREATE TABLE IF NOT EXISTS` doesn't migrate columns — if you'd like, I can make `init_db` idempotently `ALTER TABLE ADD COLUMN` missing columns so old DBs upgrade in place rather than erroring. Small, worthwhile robustness fix.)\n- **The DB now contains only robinhood.com** (the earlier meetcampfire fixture was in the deleted old-schema DB). Re-add it anytime with `make collect URL=https://meetcampfire.com/`.\n- One real-but-expected miss: the skeptical verifier dropped **JB Mackenzie** (a genuine Robinhood VP) — the \"when in doubt, answer false\" design trades a little recall for precision.\n\nNothing was committed (the DB and its metrics are git-ignored). Want me to (a) add the in-place schema migration to `init_db`, and/or (b) re-collect meetcampfire so both fixtures are present?"
+    },
+    {
+      "role": "user",
+      "text": "add the schema migration and re-collect meetcampfire"
+    },
+    {
+      "role": "assistant",
+      "text": "Two parts: (1) add idempotent in-place migration to `init_db` so old DBs upgrade instead of erroring, (2) re-collect meetcampfire. Let me read `init_db`:",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint, run tests, and explicitly verify the migration path with a simulated old-schema DB:",
+      "tools": [
+        "Bash: Lint, test, and verify migration on a simulated old DB"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Migration verified — the simulated old-schema DB upgraded in place (columns added, legacy row backfilled `is_active=1`, timestamps populated, index built), and `init_db` is idempotent. 49 tests still pass. Now re-collect meetcampfire (adds alongside the existing robinhood data on the current schema):",
+      "tools": [
+        "Bash: Re-collect meetcampfire.com"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Let me inspect the final two-company state:",
+      "tools": [
+        "Bash: Inspect both companies and metrics"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Both fixtures are now present on the current schema. Final summary:\n\n**Schema migration** — added to `init_db`: an idempotent `_migrate_schema` that `ALTER TABLE ADD COLUMN`s any missing post-release columns (`is_active`, `created_at`, `valid_from`) on a pre-existing table and backfills timestamps, **before** the new indexes that reference them are built. Verified end-to-end against a simulated old-schema DB (upgraded without error, legacy row backfilled, idempotent on re-run). 49 tests still pass, ruff clean.\n\n**Re-collected meetcampfire** — both companies now in the DB:\n- **robinhood.com**: 11 current leaders\n- **meetcampfire.com**: 3 current leaders (John Glasgow CEO, Fernando San Martin CTO, Nick Jezienicki Head of Tech Partnerships); Jon Yoo correctly skipped again.\n\nTwo metrics rows are recorded, so the dashboard will show both companies.\n\nOne honest caveat: this meetcampfire run extracted **3** leaders vs **5** previously — it missed co-founders Alex Mercado and Daniel Lantz this time. That's LLM/search non-determinism (advanced search returned a different page mix; `gpt-4o-mini` extraction varies run-to-run). The 3 captured are all genuine; the result is just less complete than the earlier pass. Re-running may recover them but isn't deterministic.\n\nLet me commit the migration code (the DB data itself is git-ignored):",
+      "tools": [
+        "Bash: Commit schema migration"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Committed (`1848468`), working tree clean.\n\n**Done:**\n- ✅ **Schema migration** in `init_db` — old DBs now upgrade in place (the exact `no such column: is_active` error you'd have hit is fixed structurally), idempotent, verified against a simulated legacy DB. 49 tests green.\n- ✅ **meetcampfire re-collected** — DB now holds both `robinhood.com` (11) and `meetcampfire.com` (3), each with a `system_metrics` row for the dashboard.\n\nNote: only the migration code was committed; the SQLite DB and its metrics are git-ignored runtime artifacts (as designed).\n\nOne thing I'd flag for your call: `session.json` no longer reflects this last migration + re-collect work (it was last regenerated at commit `990a34a`). Want me to regenerate the redacted `session.json` once more to capture the truly final state, or leave it as-is?"
+    },
+    {
+      "role": "user",
+      "text": "run and test"
+    },
+    {
+      "role": "assistant",
+      "text": "\"run and test\" — I'll run the test suite, do a live end-to-end agent smoke test against the freshly collected data, and launch the app. Starting with tests + an agent query:",
+      "tools": [
+        "Bash: Run tests and live agent smoke test"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The smoke test exposed two **real accuracy bugs** in the agent (the off-topic guardrail works fine):\n\n1. *\"How many VPs does Robinhood have?\"* → it queried `company = 'Robinhood'` but the column stores the **domain** `robinhood.com` → 0 rows → wrongly answered \"0 VPs\" (actual: 5).\n2. *\"Who is the CTO of meetcampfire.com?\"* → it matched `role LIKE '%Chief Technology Officer%'`, but the stored role is `\"Co-founder / CTO\"` → 0 rows → wrongly answered \"no CTO\" (actual: Fernando San Martin).\n\nThe agent treats a 0-row result as a definitive \"none\" instead of reconsidering an over-strict filter. This is worth fixing — let me strengthen the system prompt. Reading the current prompt:",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint, re-run tests, and re-run the same smoke test to confirm the fixes:",
+      "tools": [
+        "Bash: Lint, test, re-run agent smoke test"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Both bugs fixed — **5 VPs** for Robinhood and **Fernando San Martin (Co-founder / CTO)** for meetcampfire, now with a citation. 49 tests pass, ruff clean. Now launch the app to complete \"run\":",
+      "tools": [
+        "Bash: Launch Streamlit app"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Confirm app launched"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The app is **live at http://localhost:8502** running the current code (both views, dashboard with both companies' telemetry). It landed on 8502 because an earlier Streamlit instance from much earlier in the session (running outdated code) is still holding 8501. Let me stop that stale one to avoid confusion:",
+      "tools": [
+        "TaskStop: buyb4n0iu"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Done — ran and tested end-to-end. Summary:\n\n**Tests:** `make test` → **49 passed**, ruff clean.\n\n**Live agent smoke test** (real LLM against the freshly collected data) caught and fixed two real accuracy bugs:\n\n| Question | Before | After |\n|---|---|---|\n| How many VPs does Robinhood have? | ❌ \"0 VPs\" (queried `company='Robinhood'`) | ✅ **\"5 VPs\"** (`company='robinhood.com'`) |\n| Who is the CTO of meetcampfire.com? | ❌ \"no CTO\" (`role LIKE '%Chief Technology Officer%'`) | ✅ **\"Fernando San Martin, Co-founder / CTO\"** + citation (`role LIKE '%CTO%'`) |\n| What is the capital of France? | ✅ politely declined | ✅ politely declined |\n\nThe fix: I added a `<data_tips>` block to the agent's system prompt (company is stored as a **domain**, role is **free text** — prefer `role_category`/`LIKE`/FTS over exact title match) and taught the ReAct loop to **reconsider an over-strict filter when a query returns zero rows** instead of declaring \"none.\" Re-tested — both answers are now correct.\n\n**App:** running at **http://localhost:8502** (the current code with the dashboard + both companies' telemetry). It used 8502 because a stale earlier instance held 8501 — I've now stopped that stale one. The running instance includes the prompt fix.\n\nOne open item: the `app.py` prompt improvement is **not yet committed** (you said \"run and test,\" so I held off). It's a genuine correctness fix validated above — want me to commit it (and optionally regenerate `session.json`)?"
+    },
+    {
+      "role": "user",
+      "text": "run and test"
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Re-run tests, app health, agent regression"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All green. ✅\n\n**Tests:** `make test` → **49 passed**, ruff clean.\n\n**App:** healthy — `http://localhost:8502/_stcore/health` returns **HTTP 200** (still running, current code).\n\n**Live agent regression** (real LLM + real DB) — all correct:\n- *How many VPs does Robinhood have?* → **5** (`company='robinhood.com'`, `role_category='VP'`, `is_active=1`)\n- *List the C-level executives at robinhood.com* → returns the C-Level set (John Castelly et al.) with `source_url` citations\n- *Which companies are in the database?* → `SELECT DISTINCT company` → **meetcampfire.com, robinhood.com**\n\nEverything runs and tests clean: the suite passes, the Streamlit app serves on 8502, and the agent answers accurately with the prompt fix from the last turn.\n\nReminder of the one open item (unchanged): the `src/app.py` prompt improvement is still **uncommitted**. Say the word and I'll commit it (and optionally refresh `session.json`)."
+    },
+    {
+      "role": "user",
+      "text": "**SQL Generative Instructions:**\n   - Update the system instructions injected into the Text-to-SQL agent. Explicitly command the LLM to ALWAYS use case-insensitive fractional matching (`LOWER(column) LIKE '%value%'`) instead of strict equals (`=`) for `company`, `role`, and `name` fields. This ensures that user typos like \"Robinhod\", \"сео\", or \"Director\" still yield exact database hits.\n\n2. **UX Fallback Logic (\"Did You Mean?\"):**\n   - Refactor the agent execution loop in `src/app.py`. If the generated SQL query executes successfully but returns exactly 0 rows, instruct the agent to run a quick `SELECT DISTINCT company FROM leadership WHERE is_active = 1` query behind the scenes. \n   - The agent should use this list to suggest valid corrections to the user (e.g., \"I couldn't find anything for 'Robinhod'. Did you mean 'Robinhood'? Here are the companies currently in my database: ...\").\n\n3. **Strict Out-of-Bounds Guardrails:**\n   - Reinforce that if a user query is completely unrelated to corporate leadership, backgrounds, or statistics (e.g., recipes, general coding, unrelated chit-chat), the agent must immediately short-circuit without emitting any SQL tools and politely refuse using our custom `<guardrails>` format.\n\nRun `make test` afterward to ensure our helper tests remain 100% green, and update the redacted `session.json` to lock this final UX resilience layer into git history."
+    },
+    {
+      "role": "assistant",
+      "text": "Three targeted improvements to the agent in `app.py`. Let me read the current `run_agent` loop and prompt to edit precisely:",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now I'll rewrite the guardrails, data_tips, and process sections together:",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Noted — I'll add the empty-query guard too. First let me finish the \"Did You Mean?\" loop logic. Reading the `run_agent` tool-execution loop:",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add the \"Did You Mean?\" hint injection on 0-row results, plus an `_active_companies` helper:",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add the `_active_companies` helper (near `_run_tool`):",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now the empty-query guard in `render_chat`. Let me read it:",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint, run tests, and verify the new behaviors with live agent calls (typo/\"did you mean\", case-insensitive, off-topic short-circuit):",
+      "tools": [
+        "Bash: Lint, test, and verify new agent behaviors"
       ]
     }
   ]
