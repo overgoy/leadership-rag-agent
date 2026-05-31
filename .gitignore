@@ -1,0 +1,18 @@
+# Python
+venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets — never commit real keys (use .env.example as the template)
+.env
+
+# Generated database + SQLite WAL/SHM sidecars (keep data/.gitkeep)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Editors / OS
+.idea/
+.DS_Store

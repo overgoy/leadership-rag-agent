@@ -1,0 +1,3 @@
+[browser]
+# Opt out of Streamlit's anonymous usage telemetry.
+gatherUsageStats = false

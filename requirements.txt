@@ -1,0 +1,19 @@
+# Core LLM & agent
+litellm>=1.40.0          # Unified LLM gateway (OpenAI/Anthropic), num_retries support
+
+# Web search & data collection
+tavily-python>=0.3.0     # Primary web search for leadership sourcing
+duckduckgo-search>=6.0.0 # Fallback / no-API-key search option
+
+# Validation & config
+pydantic>=2.7.0          # Structured-output validation for LLM extraction
+python-dotenv>=1.0.0     # Load API keys from .env
+
+# UI
+streamlit>=1.35.0        # Chat interface, st.write_stream, st.session_state
+
+# NOTE: sqlite3 + FTS5 ship with the Python 3.11+ standard library (no pip install).
+
+# Dev / tooling
+pytest>=8.0.0            # Test suite (tests/)
+ruff>=0.4.0              # Lint + format (see .claudecode.md §8)
