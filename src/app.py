@@ -342,7 +342,7 @@ def _render_steps(steps: list[dict]) -> None:
                 else:
                     st.caption(f"{result['row_count']} row(s)")
                     if result["rows"]:
-                        st.dataframe(result["rows"], use_container_width=True)
+                        st.dataframe(result["rows"], width="stretch")
 
 
 def render_chat() -> None:
@@ -473,7 +473,7 @@ def render_dashboard() -> None:
             st.caption("No leadership records yet.")
 
     with st.expander("Recent collection runs"):
-        st.dataframe(pd.DataFrame(runs), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(runs), width="stretch", hide_index=True)
 
 
 def main() -> None:
