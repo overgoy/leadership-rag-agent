@@ -2,7 +2,7 @@
   "project": "Company Leadership RAG Agent",
   "assistant": "Claude Code (Anthropic Opus 4.x)",
   "description": "Curated export of the Claude Code session used to build this project, showing the step-by-step collaboration loop. Secrets are redacted; internal chain-of-thought and verbose tool input/output are omitted, and tool calls are summarized to one line each.",
-  "turn_count": 147,
+  "turn_count": 253,
   "turns": [
     {
       "role": "user",
@@ -868,6 +868,688 @@
       "tools": [
         "Write ../../../../tmp/export_session.py"
       ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Generate session.json from transcript"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now the critical check — verify **no secrets** leaked, and spot-check the content:",
+      "tools": [
+        "Bash: Verify no secrets and inspect session.json"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "No secrets present (and 0 redaction markers — the `.env` content never even entered the curated subset, since it lived in tool-result messages I skip). The export faithfully captures the build loop: 19 real user prompts, 128 assistant turns. Let me confirm `session.json` will be committed (not ignored) and do one repo-wide secret sweep to be safe:",
+      "tools": [
+        "Bash: Confirm session.json committable and repo secret-free"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Both done.\n\n**`make test` target** — added to the Makefile (`$(PY) -m pytest -q`), wired into `.PHONY` and the header usage block. Verified: `49 passed`. README updated in three places — the Make-targets table, the Development section (with a note that the suite is offline/deterministic), and the project-layout tree.\n\n**`session.json`** — a curated, redacted export of this Claude Code build session (46 KB, 147 turns: 19 real user prompts + 128 assistant turns with one-line tool-action summaries). Verified safe and clean:\n- ✅ No secrets — repo-wide sweep for `sk-`/`tvly-`/`svcacct` tokens is empty; the `.env` key values never entered the export (they lived in tool-result messages, which the exporter skips, with regex redaction as a backstop).\n- ✅ Valid JSON, will be committed (not gitignored), internal chain-of-thought and verbose tool I/O omitted for readability.\n\nThe export script lives in `/tmp` (not in the repo). If you'd ever want to regenerate it after more session activity, I can move it into the repo as a small utility — but it's not a required deliverable.\n\nThat completes every deliverable in `task.md`:\n\n| Deliverable | Status |\n|---|---|\n| Runnable clone-and-go repo | ✅ `make install / collect / chat / test` |\n| Data fixtures (example company) | ✅ `make collect` regenerates `meetcampfire.com` |\n| Chat interface | ✅ Streamlit Text-to-SQL agent (live at :8501) |\n| `session.json` export | ✅ committed, secret-free |\n\nThe Streamlit app is still running in the background (task `buyb4n0iu`). Want me to leave it up, or stop it? And since nothing's been committed yet, I can stage and commit the project on a branch whenever you'd like — just say the word (I won't commit without your go-ahead)."
+    },
+    {
+      "role": "user",
+      "text": "1. **Asynchronous / Parallel Scaling:** Our current scraper handles pages sequentially. To make the pipeline scalable for large domains, refactor the page mining loop in `src/scraper.py` to process the pages concurrently using a `ThreadPoolExecutor` or `asyncio`. This will allow us to run extraction and employment verification across all mined pages in parallel.\n2. **Comprehensive README Update:** Overwrite `README.md` to include our detailed \"Engineering Strategy & Design Rationales\" section. It must explicitly justify:\n   - Why a structured relational table (SQLite) is fundamentally superior to a pure Vector DB for deterministic leadership analytics (like counts, role categories, and locations).\n   - How we leverage native SQLite FTS5 triggers for zero-cost, localized keyword search over biographies.\n   - The security posture of using an isolated Tavily Sandbox to intercept raw, dangerous web HTML instead of fetching untrusted DOM trees directly into our runtime.\n   - Our defense-in-depth database execution guards (strict read-only database connections `mode=ro` combined with application-level SELECT regex filtering).\n\nImplement the parallel scaling in `src/scraper.py`, write the updated `README.md`, and make sure our 49 tests still run flawlessly via `make test` before doing the final commit!"
+    },
+    {
+      "role": "assistant",
+      "text": "Starting with the parallel refactor of `src/scraper.py`. Let me read the exact current sections I'll edit:",
+      "tools": [
+        "Read src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now the edits. First the import and the new `MAX_WORKERS` constant:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint/format the scraper and verify it imports:",
+      "tools": [
+        "Bash: Lint, format, verify scraper imports"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Scraper parallelized and verified. Now overwrite `README.md` with the comprehensive version including the **Engineering Strategy & Design Rationales** section:",
+      "tools": [
+        "Write README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now run the full lint/format (§8) and the test suite before committing:",
+      "tools": [
+        "Bash: Lint, format, and run full test suite"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All **49 tests pass**, lint clean. Now let me check git state before committing:",
+      "tools": [
+        "Bash: Check git state, branch, and staging"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "This is the **initial commit** (0 commits yet), so there's no existing `main` to branch from — the first commit establishes it. Git identity is unset, so I'll set it locally (using your email from context) and commit:",
+      "tools": [
+        "Bash: Set git identity and create initial commit"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Committed. Final verification that nothing sensitive or generated slipped into the commit:",
+      "tools": [
+        "Bash: Confirm commit excludes secrets and tree is clean"
+      ]
+    },
+    {
+      "role": "user",
+      "text": "**Scraper Scaling Optimizations (`src/scraper.py`):**\n   - Implement a mechanism to gracefully handle LLM/Search Rate Limits (Rate Limiting) using bounded concurrency (e.g., controlling max workers in ThreadPoolExecutor) and wrap completions with retries.\n   - Batch database writes into a single clean transaction instead of emitting single row updates from parallel threads to prevent SQLite locking issues.\n\n2. **Metrics Collection Layer (`src/database.py`):**\n   - Create a `system_metrics` table to record performance and financial data: `company`, `duration_seconds`, `pages_mined`, `candidates_extracted`, `candidates_verified`, `tokens_used`, and `estimated_cost_usd`.\n   - Update `src/scraper.py` to calculate and log these metrics into the database at the end of every `make collect` run.\n\n3. **Analytics Dashboard UI (`src/app.py`):**\n   - Use Streamlit multi-page navigation or a sidebar radio selection to introduce a \"System Insights & Dashboard\" view alongside our \"Chat Assistant\".\n   - In the Dashboard, display high-level KPI cards (`st.metric`) for Total Infrastructure Cost (aggregated USD spent on LLM), Scraper Success Rate, and Total Records standard metrics.\n   - Render diagnostic charts (`st.bar_chart` or `st.line_chart`) illustrating processing times and leadership distribution by category across all scraped companies.\n\n4. **Update Rationales in README:**\n   - Document this scaling and observability architecture in our \"Engineering Strategy & Design Rationales\" section.\n\nImplement the metrics table, update the scraper execution loop with parallel batching and logging, and build the analytical Streamlit dashboard tab. Let me know when the architectural update is complete!"
+    },
+    {
+      "role": "assistant",
+      "text": "This is a substantial architecture update. Let me set up task tracking and work through it systematically across the three files plus README. First, let me load the task tools:",
+      "tools": [
+        "ToolSearch: select:TaskCreate,TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskCreate: Add a system_metrics table (company, duration_seconds, pages_mined, candidates_extracted, candidates_verified, tokens_us"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskCreate: Bounded ThreadPoolExecutor (already MAX_WORKERS) + litellm retries; make extract_leaders/verify_employment return token+"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskCreate: Sidebar radio to switch between Chat Assistant and System Insights & Dashboard. Dashboard: st.metric KPI cards (Total In"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskCreate: Add a Scaling & Observability rationale subsection to README Engineering Strategy. Add pandas to requirements if used. R"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now starting Task #1 — `database.py`. Let me read the current schema and functions:",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now let me add the `system_metrics` table to the schema, plus the `_METRIC_COLUMNS` tuple:",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add `replace_company` (atomic) and `insert_metrics`. Let me read the rest of the functions to place them well:",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Verify replace_company + insert_metrics work"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Task #1 done. Now Task #2 — the scraper. Let me read the current `verify_employment` and `extract_leaders`:",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now let me make the scraper edits. First add `import time`:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add a `_usage` helper and update `verify_employment` to return usage:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now update `extract_leaders` to return `(leaders, stats)`:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The user expanded the request — same core work plus **exponential backoff for 429s** and an **optional Dockerfile**. Let me add a Dockerfile task and continue. First, finishing the scraper: let me read the current `collect`:",
+      "tools": [
+        "TaskCreate: Clean Dockerfile at repo root: python 3.11-slim, copy source, install requirements, expose 8501, run streamlit headless."
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now rewrite the `collect` body to handle the `(leaders, stats)` tuples, aggregate metrics, use the atomic `replace_company`, time the run, and log metrics:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add explicit exponential-backoff retry strategy to both completion calls (for graceful 429 handling):",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint, format, and verify the scraper imports and the metrics rollup works (with a stubbed `extract_leaders` so no network):",
+      "tools": [
+        "Bash: Lint/format scraper and test collect metrics offline"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Scraper complete — metrics roll up correctly, dedup and atomic write verified offline. Now Task #3, the dashboard. Let me read the rest of `app.py`:",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now I'll build the dashboard. First add the `pandas` import (Streamlit ships it):",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now refactor `main()` into a sidebar-dispatched chat view + dashboard view:",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now lint/format and verify the dashboard logic with a temp DB (no Streamlit runtime, but the query helpers are testable):",
+      "tools": [
+        "Bash: Lint/format app and verify dashboard queries"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Dashboard verified. Now Task #5 — the optional Dockerfile and `.dockerignore`:",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Write Dockerfile"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Write .dockerignore"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now add `pandas` to `requirements.txt`:",
+      "tools": [
+        "Edit requirements.txt"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Confirm pandas installed and Dockerfile sanity"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "pandas 3.0.3 satisfies the requirement. Now the README. Let me read the relevant sections to extend:",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: List README headings"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now let me add a new rationale subsection #5 (Scaling & Observability) and expand the Scalability section. First, the new rationale subsection:",
+      "tools": [
+        "Edit README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now expand the Scalability section to cover telemetry, and add a Dashboard + Deployment section. Let me update the Scalability section:",
+      "tools": [
+        "Edit README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The user added repo-hygiene requirements. Important note acknowledged: **no LLM/extraction mock tests** — I haven't added any (my offline checks were throwaway `python -c` scripts, not committed tests), and the suite stays at the existing 49 helper tests. Let me execute the hygiene items.\n\nFirst, `.gitignore` — add `.venv/` and `session.json`:",
+      "tools": [
+        "Edit .gitignore"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit .gitignore"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now Task: add `created_at` to the `leadership` table. Let me read the exact current table definition:",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now let me check line lengths before choosing the ruff config (to avoid enabling rules that would flag existing code):",
+      "tools": [
+        "Bash: Find lines exceeding 88 chars"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Those line numbers are cumulative (awk `NR`); regardless, a few string/comment lines exceed 88 and can't be auto-wrapped. So I'll explicitly configure ruff to use the default lint set + isort + warnings (leaving line-length to the formatter, not enforced as E501). Let me create `pyproject.toml`:",
+      "tools": [
+        "Write pyproject.toml"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Verify ruff config produces clean check + format"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "ruff config is clean. Now untrack `session.json` and run the test suite:",
+      "tools": [
+        "Bash: Untrack session.json and run tests"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All 49 green, `session.json` untracked. Let me update the README layout note for `session.json` (now local/untracked):",
+      "tools": [
+        "Edit README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "TaskUpdate"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now let me do a final lint/format/test pass and review what will be committed before the final commit:",
+      "tools": [
+        "Bash: Final lint/test/status/secret checks"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "More refinements before committing — so I'll hold the commit until these 4 are done. Note `session.json` is already staged as deleted from the index (`D session.json` above), but I'll re-run the command as asked to be certain. Let me start with the database schema (soft-delete history).\n\nFirst, add `is_active` and `valid_from` columns:",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The new `idx_leadership_active` would match the `idx_leadership%` pattern asserted in an existing test — and I must keep that test untouched and green. The index isn't needed at this scale, so I'll drop it:",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now update `replace_company` to soft-delete instead of hard-delete:",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now update the `get_schema` hint so the agent filters to current leaders by default. Let me read it:",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Let me check the final state of that edit (the user adjusted it):",
+      "tools": [
+        "Read src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Understood — reversing the `session.json` decision: it must be **tracked** as a required deliverable. Let me remove it from `.gitignore`, re-add it, and fix the README note. (I'll also note line 256 in database.py has a merged-string artifact from the manual edit — `ruff format` will clean it; I'll verify.)",
+      "tools": [
+        "Edit .gitignore"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit README.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now fix the merged-string line in `database.py` (line 256):",
+      "tools": [
+        "Edit src/database.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Re-track session.json and verify soft-delete history"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Soft-delete history works perfectly (Old CEO archived, New CEO current) and `session.json` is tracked. Now the logging refactor. Let me find all `print` calls in both files:",
+      "tools": [
+        "Bash: Locate print calls in scraper and app"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "app.py has no prints; I'll still add a logger there for consistency. Starting with scraper.py — add `logging` import and logger setup:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now replace each `print` with a `logger` call:",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/scraper.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now `sys` is still used (argv); good. Let me add logging to app.py:",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now update the dashboard to count only current (active) leaders:",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now Step 4 — create `project-map.md` (the AI context map):",
+      "tools": [
+        "Write project-map.md"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Now the full verification pass — lint, format, tests, and an end-to-end offline scraper run to confirm logging + soft-delete + metrics all work together:",
+      "tools": [
+        "Bash: Lint, test, and end-to-end offline collect verification"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All 4 steps are verified: structured logging is emitting clean records, soft-delete preserves history (CEO1 archived, CEO2 current), metrics logged, ruff clean, **49 tests pass**. Let me mark tasks done and review the final git state before committing:",
+      "tools": [
+        "Bash: Stage all and review final state before commit"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "`.claudecode.md` shows as modified — I didn't intend to touch the spec. Let me check what changed there before committing:",
+      "tools": [
+        "Bash: Inspect .claudecode.md changes"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "`.claudecode.md` was updated by you (the spec author) to match the new architecture — soft-delete, concurrency, Tavily sandbox, FinOps telemetry — so it's correct to include. Everything staged is intended. Now the final commit:",
+      "tools": [
+        "Bash: Create the final commit"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Committed cleanly (working tree empty). Let me close out the task list:",
+      "tools": [
+        "TaskList"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All done and committed. Final state:\n\n**Commit `f2ab2bd`** — \"Add scaling, telemetry, soft-delete history, and deployment layer\" (working tree clean, 49 tests green, ruff clean).\n\nWhat landed across the four requested areas:\n\n**1. Data history (soft delete)** — `leadership` gained `created_at`, `is_active`, `valid_from`. `replace_company()` now marks the company's current rows `is_active=0` and inserts the new ones as `is_active=1` in **one atomic transaction** — preserving a who-joined/left audit trail. `get_schema()` tells the agent to filter `WHERE is_active = 1` for present-day questions. Verified: re-scrape archived the old CEO and kept the new one.\n\n**2. `pyproject.toml`** — explicit ruff lint (`E4/E7/E9/F/I/W`) + format config; line-length 88, target py311.\n\n**3. Repository hygiene** — `.gitignore` now covers `venv/` **and** `.venv/`; `git rm --cached session.json` was run — but per your final instruction `session.json` is **re-tracked as a deliverable** (removed from `.gitignore`, confirmed tracked & secret-free).\n\n**4. Optional `Dockerfile`** — `python:3.11-slim`, installs requirements, copies `src/` + `.streamlit/`, exposes 8501, runs Streamlit headless with a `/_stcore/health` check, plus a `.dockerignore`. Local `make chat` remains primary.\n\nAlso folded in from the broader request (no LLM mocks, no external tracing — as instructed):\n- **Structured logging** replacing every `print(..., file=sys.stderr)` in `scraper.py` (and a `logger.exception` in `app.py`), with `basicConfig` + `logging.getLogger(__name__)`. Verified emitting timestamped, level-tagged records.\n- **`project-map.md`** — AI context map (architecture, files, full DB schema, conventions).\n- Earlier in this arc: bounded-concurrency mining with 429 backoff, `system_metrics` telemetry, and the **System Insights & Dashboard** tab (KPI cards + bar charts), all documented in the README's Engineering Strategy section.\n\nOne note for transparency: `session.json` reflects the build session up to when it was generated; its content didn't change in this commit. If you'd like it regenerated to include this latest round of work before you submit, say the word and I'll re-run the (redacted) exporter."
+    },
+    {
+      "role": "user",
+      "text": "regenerate session.json to include the latest work"
     }
   ]
 }
