@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from urllib.parse import urlparse
@@ -84,6 +85,19 @@ def _is_board_role(role: Optional[str]) -> bool:
     return any(kw in low for kw in _BOARD_TITLE_KEYWORDS)
 
 
+# Sentinel strings the model sometimes emits for "no value"; treated as None.
+_PLACEHOLDER_STRINGS = frozenset(
+    {"", "null", "none", "n/a", "na", "unknown", "not specified", "not available"}
+)
+
+
+def _clean_text(value):
+    """Coerce empty/placeholder strings into a real None; pass through otherwise."""
+    if isinstance(value, str) and value.strip().lower() in _PLACEHOLDER_STRINGS:
+        return None
+    return value
+
+
 class Leader(BaseModel):
     """A single extracted leader. Only ``name`` is required; every other field
     is Optional so a partial profile never fails validation (§3)."""
@@ -116,18 +130,7 @@ class Leader(BaseModel):
         """Coerce empty/placeholder strings the model sometimes emits (e.g. the
         literal 'null', 'N/A', 'unknown') into a real None, so the stored data is
         clean rather than carrying sentinel text (§3)."""
-        if isinstance(value, str) and value.strip().lower() in {
-            "",
-            "null",
-            "none",
-            "n/a",
-            "na",
-            "unknown",
-            "not specified",
-            "not available",
-        }:
-            return None
-        return value
+        return _clean_text(value)
 
 
 class LeadershipExtraction(BaseModel):
@@ -261,6 +264,95 @@ def verify_employment(
     except Exception as exc:  # noqa: BLE001 — keep on error (fail open)
         logger.warning("verification error for %s: %s", name, exc)
         return True, 0, 0.0
+
+
+# §5: bound the HQ-resolution call; it returns one short location string.
+HQ_MAX_TOKENS = 80
+
+_HQ_SYSTEM = (
+    "You identify a company's PRIMARY headquarters location from web page text.\n"
+    "Using ONLY the provided text, return the headquarters as 'City, "
+    "Region/Country' (e.g. 'Menlo Park, California, USA') if it is stated or "
+    "clearly implied. If the text does not indicate a headquarters location, "
+    "return null. Never guess."
+)
+
+
+class _HQLocation(BaseModel):
+    """Result of the headquarters-location resolution pass."""
+
+    location: Optional[str] = None
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def _clean(cls, value):
+        return _clean_text(value)
+
+
+def _search_hq_text(company: str) -> str:
+    """Run a dedicated Tavily search for the company's HQ and return the combined
+    result text (grounding the HQ in a real source, since leadership pages rarely
+    state it). Returns '' on any failure."""
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return ""
+    try:
+        client = TavilyClient(api_key=api_key)
+        resp = client.search(
+            query=f"{company} company headquarters location city and state",
+            max_results=3,
+            include_raw_content=True,
+            search_depth="basic",
+        )
+    except Exception as exc:  # noqa: BLE001 — backfill is best-effort
+        logger.warning("HQ search failed for %s: %s", company, exc)
+        return ""
+    parts = [
+        (r.get("raw_content") or r.get("content") or "")
+        for r in resp.get("results", [])
+    ]
+    return "\n\n".join(p for p in parts if p).strip()[:MAX_TEXT_CHARS]
+
+
+def resolve_hq_location(company: str) -> tuple[Optional[str], int, float]:
+    """Best-effort resolution of the company's HQ location, used to backfill
+    leaders whose individual location is unknown. Runs a dedicated Tavily search
+    (leadership pages seldom state the HQ) and asks the model to read the HQ from
+    that real source text.
+
+    Returns ``(location_or_None, tokens_used, cost_usd)``. Never raises — a failure
+    just yields no backfill."""
+    text = _search_hq_text(company)
+    if not text:
+        return None, 0, 0.0
+    user_msg = (
+        f"<company>{company}</company>\n"
+        "<page_text>\n"
+        f"{text}\n"
+        "</page_text>\n"
+        "What is this company's headquarters location?"
+    )
+    try:
+        resp = litellm.completion(
+            model=EXTRACTION_MODEL,
+            messages=[
+                {"role": "system", "content": _HQ_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format=_HQLocation,
+            num_retries=3,
+            retry_strategy="exponential_backoff_retry",
+            max_tokens=HQ_MAX_TOKENS,
+            temperature=0,
+        )
+        tokens, cost = _usage(resp)
+        hq = _HQLocation.model_validate_json(
+            resp.choices[0].message.content or "{}"
+        ).location
+        return hq, tokens, cost
+    except Exception as exc:  # noqa: BLE001 — backfill is best-effort
+        logger.warning("HQ location resolution failed for %s: %s", company, exc)
+        return None, 0, 0.0
 
 
 def _company_from_url(url: str) -> str:
@@ -426,6 +518,24 @@ def collect(url: str) -> int:
                 seen.add(key)
                 collected.append(leader)
 
+    # HQ-location backfill: for leaders whose individual location is unknown, fall
+    # back to the company's headquarters. First resolve the HQ via a dedicated
+    # Tavily search; if that yields nothing, fall back to the most common location
+    # already extracted from the company's own pages (still grounded, not guessed).
+    # Helps answer "where is the CEO based?" when only the HQ is known.
+    hq_tokens, hq_cost = 0, 0.0
+    missing = [ld for ld in collected if not ld.get("location")]
+    if missing:
+        hq, hq_tokens, hq_cost = resolve_hq_location(company)
+        if not hq:
+            located = [ld["location"] for ld in collected if ld.get("location")]
+            if located:
+                hq = Counter(located).most_common(1)[0][0]
+        if hq:
+            for ld in missing:
+                ld["location"] = hq
+            logger.info("backfilled %d leaders with HQ location: %s", len(missing), hq)
+
     # One atomic write from the main thread (§3): DELETE + bulk INSERT in a single
     # transaction, instead of many small commits from worker threads.
     inserted = database.replace_company(company, collected)
@@ -441,8 +551,10 @@ def collect(url: str) -> int:
             s.get("candidates_extracted", 0) for s in page_stats
         ),
         "candidates_verified": sum(s.get("candidates_verified", 0) for s in page_stats),
-        "tokens_used": sum(s.get("tokens", 0) for s in page_stats),
-        "estimated_cost_usd": round(sum(s.get("cost", 0.0) for s in page_stats), 6),
+        "tokens_used": sum(s.get("tokens", 0) for s in page_stats) + hq_tokens,
+        "estimated_cost_usd": round(
+            sum(s.get("cost", 0.0) for s in page_stats) + hq_cost, 6
+        ),
     }
     database.insert_metrics(metrics)
     logger.info(

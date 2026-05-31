@@ -95,8 +95,13 @@ def _cached_schema() -> str:
     return database.get_schema()
 
 
-def _build_system_prompt(schema: str) -> str:
-    """Assemble the XML-tagged agent system prompt around the live schema (§6)."""
+def _build_system_prompt(schema: str, companies: list[str]) -> str:
+    """Assemble the XML-tagged agent system prompt around the live schema (§6).
+
+    ``companies`` is the list of companies currently in the database, injected so
+    the agent can enforce company context (ask which company when ambiguous).
+    """
+    company_list = ", ".join(companies) if companies else "(none collected yet)"
     return (
         "<role>\n"
         "You are a precise data analyst for a company-leadership database. You "
@@ -106,6 +111,9 @@ def _build_system_prompt(schema: str) -> str:
         "<database_schema>\n"
         f"{schema}\n"
         "</database_schema>\n"
+        "<companies>\n"
+        f"The database currently contains these companies: {company_list}.\n"
+        "</companies>\n"
         "<tools>\n"
         "You have one tool, execute_sql(query). It runs a single read-only SELECT "
         "and returns rows as JSON.\n"
@@ -120,30 +128,40 @@ def _build_system_prompt(schema: str) -> str:
         "that states what you can help with.\n"
         "</guardrails>\n"
         "<data_tips>\n"
-        "- ALWAYS match the text columns company, role, and name "
-        "case-insensitively and by fragment — NEVER with strict '='. Use "
-        "LOWER(col) LIKE '%value%' with a LOWERCASED value, e.g. "
-        "LOWER(company) LIKE '%robinhood%', LOWER(role) LIKE '%cto%', "
-        "LOWER(name) LIKE '%glasgow%'. This tolerates case differences, partial "
-        "names, and minor typos (e.g. 'СEO', 'Director', 'Robinhod').\n"
+        "- Match the text columns company, role, and name by FRAGMENT with LIKE, "
+        "never strict '='. SQLite's LIKE is case-insensitive for ASCII, so keep the "
+        "SQL clean and lean — no LOWER() needed: e.g. company LIKE '%robinhood%', "
+        "role LIKE '%cto%', name LIKE '%glasgow%'. Fragment matching tolerates "
+        "partials and casing.\n"
         "- 'company' stores a DOMAIN (e.g. 'robinhood.com', 'meetcampfire.com'), not "
-        "a display name like 'Robinhood'; the lowercased LIKE fragment still matches "
-        "it. Run SELECT DISTINCT company FROM leadership WHERE is_active = 1 to see "
-        "available values.\n"
-        "- 'role' is free text (e.g. 'Co-founder / CTO', 'VP of Risk'). For tiers "
-        "prefer role_category ('C-Level','VP','Head'); for titles use "
-        "LOWER(role) LIKE '%cto%'. For bios use the FTS5 table "
-        "(leadership_fts MATCH ...).\n"
-        "- Titles may be stored as the ACRONYM or the FULL form, so match BOTH. "
-        "Expand common abbreviations and OR the alternatives, e.g. CIO -> "
-        "(LOWER(role) LIKE '%cio%' OR LOWER(role) LIKE '%information officer%'); "
-        "likewise CEO/Chief Executive, CFO/Chief Financial, CTO/Chief Technology, "
+        "a display name; the LIKE fragment still matches it. The companies currently "
+        "present are listed in <companies>.\n"
+        "- For a known executive role, COMBINE the structured tier with title "
+        "aliases: filter role_category ('C-Level','VP','Head') AND OR-together the "
+        "acronym with the spelled-out title. E.g. CEO -> role_category = 'C-Level' "
+        "AND (role LIKE '%ceo%' OR role LIKE '%chief executive officer%') — this "
+        "reliably catches execs like Vlad Tenev however the page wrote the title. "
+        "Likewise CIO/Chief Information, CFO/Chief Financial, CTO/Chief Technology, "
         "CMO/Chief Marketing, COO/Chief Operating, CCO/Chief Compliance.\n"
+        "- For free-text/semantic search over bios, use the FTS5 table "
+        "(leadership_fts MATCH ...).\n"
         "- Rows are current when is_active = 1 (see the schema note).\n"
         "</data_tips>\n"
+        "<multi_company>\n"
+        "When the user asks a global question that names no company (e.g. 'Who are "
+        "the CEOs?', 'List the VPs'), do NOT ask them to pick one. Query ACROSS all "
+        "active companies — SELECT the company column too — and format the answer as "
+        "a clean per-company breakdown, e.g.:\n"
+        "  **Robinhood:** Vlad Tenev (CEO)\n"
+        "  **MeetCampfire:** John Glasgow (CEO)\n"
+        "Only ask the user to narrow down if the result set is very large or "
+        "genuinely ambiguous.\n"
+        "</multi_company>\n"
         "<process>\n"
         "1. Reason step by step about the question and the SQL that answers it. "
-        "Put this reasoning inside <thinking>...</thinking> tags.\n"
+        "Put this reasoning inside <thinking>...</thinking> tags. For company-less "
+        "questions, follow <multi_company>: answer across all companies with a "
+        "per-company breakdown.\n"
         "2. Call execute_sql with a SELECT, using case-insensitive LIKE matching as "
         "described above. For keyword/semantic search over bios, JOIN "
         "leadership_fts with MATCH.\n"
@@ -259,7 +277,10 @@ def run_agent(history: list[dict], steps: list[dict]):
     caller can pass this generator straight to ``st.write_stream`` (§3).
     """
     messages: list = [
-        {"role": "system", "content": _build_system_prompt(_cached_schema())}
+        {
+            "role": "system",
+            "content": _build_system_prompt(_cached_schema(), _active_companies()),
+        }
     ]
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
 
