@@ -34,6 +34,7 @@ def test_init_creates_schema_and_indexes(temp_db):
         "idx_leadership_department",
         "idx_leadership_category",
         "idx_leadership_company",
+        "idx_leadership_active",
     }
 
 

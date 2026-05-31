@@ -72,6 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_leadership_role        ON leadership(role);
 CREATE INDEX IF NOT EXISTS idx_leadership_department  ON leadership(department);
 CREATE INDEX IF NOT EXISTS idx_leadership_category    ON leadership(role_category);
 CREATE INDEX IF NOT EXISTS idx_leadership_company     ON leadership(company);
+CREATE INDEX IF NOT EXISTS idx_leadership_active      ON leadership(is_active);
 
 -- FTS5 over the bio (plus name) for semantic/context queries. External-content
 -- table keeps it in sync with ``leadership`` via the triggers below.
