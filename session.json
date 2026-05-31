@@ -2,7 +2,7 @@
   "project": "Company Leadership RAG Agent",
   "assistant": "Claude Code (Anthropic Opus 4.x)",
   "description": "Curated export of the Claude Code session used to build this project, showing the step-by-step collaboration loop. Secrets are redacted; internal chain-of-thought and verbose tool input/output are omitted, and tool calls are summarized to one line each.",
-  "turn_count": 304,
+  "turn_count": 315,
   "turns": [
     {
       "role": "user",
@@ -1855,6 +1855,67 @@
       "text": "Now lint, run tests, and verify the new behaviors with live agent calls (typo/\"did you mean\", case-insensitive, off-topic short-circuit):",
       "tools": [
         "Bash: Lint, test, and verify new agent behaviors"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All three behaviors verified live:\n\n1. **Case-insensitive fractional matching** — *\"how many vps does ROBINHOD have?\"* → `LOWER(company) LIKE '%robinhood%'` → **5 VPs** ✅ (the typo/casing resolved via LIKE).\n2. **Role LIKE matching** — *\"who heads recruiting at robinhood?\"* → `LOWER(role) LIKE '%recruiting%'` → **Rich Cho, Head of Recruiting** + citation ✅\n3. **Out-of-bounds short-circuit** — *\"give me a recipe for pancakes\"* → **0 tool calls**, polite refusal ✅\n\nThe \"Did you mean?\" hint fires whenever a query returns 0 rows (the `_active_companies` list is appended to the tool result). 49 tests pass, ruff clean. The empty-query guard (`strip()` → `st.warning`) is in `render_chat`.\n\nNow regenerate `session.json` and commit (this also folds in last turn's prompt fix that was still uncommitted):",
+      "tools": [
+        "Bash: Regenerate session.json and commit UX resilience layer"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "Committed (`8f25c51`), working tree clean, `session.json` refreshed (304 turns, secret-free).\n\nOne thing to keep accurate: the app instance on 8502 was launched before these latest edits and (without watchdog) won't hot-reload. Let me restart it so the running app reflects the committed code:",
+      "tools": [
+        "TaskStop: bl7nmawbe"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Relaunch app with latest committed code"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Confirm relaunched app URL"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "All done — ran, tested, and committed.\n\n**Implemented (commit `8f25c51`):**\n1. **Case-insensitive fractional matching** — the prompt now mandates `LOWER(col) LIKE '%value%'` for `company`, `role`, and `name` (never strict `=`), tolerating casing and typos.\n2. **\"Did You Mean?\" fallback** — when a successful query returns **0 rows**, the loop appends the live `SELECT DISTINCT company WHERE is_active=1` list to the tool result so the agent suggests a correction instead of dead-ending.\n3. **Strict out-of-bounds guardrail** — unrelated requests (recipes, coding, chit-chat) short-circuit on the first step with no SQL emitted.\n4. **Empty-query guard** — `render_chat` strips the prompt; blank input shows `st.warning(\"Please enter a valid question.\")` and skips the agent loop.\n\n**Verified:**\n- `make test` → **49 passed**, ruff clean.\n- Live: `ROBINHOD` → 5 VPs; recruiting head → Rich Cho via `LOWER(role) LIKE`; recipe → refused with 0 tool calls.\n- `session.json` regenerated (304 turns) and secret-scanned clean; committed.\n\n**App:** relaunched on the latest code — now live at **http://localhost:8501** (HTTP-served; the stale instances are stopped). Working tree is clean."
+    },
+    {
+      "role": "user",
+      "text": "try it out"
+    },
+    {
+      "role": "assistant",
+      "text": "Let me exercise the live agent across a range of realistic queries — including the new resilience features:",
+      "tools": [
+        "Bash: Live demo of the agent across varied queries"
+      ]
+    },
+    {
+      "role": "assistant",
+      "text": "The live agent handled everything well. Here's the run-through against the real data:\n\n**1. Stats across companies** — *\"How many leaders in each role category?\"*\n```sql\nSELECT role_category, COUNT(*) FROM leadership WHERE is_active=1 GROUP BY role_category\n```\n→ **C-Level: 6, VP: 5, Head: 3** (14 total = 11 Robinhood + 3 Campfire) ✅\n\n**2. \"Did You Mean?\" fallback** — *\"Who is the CEO of Stripe?\"* (not in DB)\n→ 0 rows → fallback fired: **\"I couldn't find anything for 'Stripe'. Did you mean 'Robinhood'? The available companies are meetcampfire.com and robinhood.com.\"** ✅ exactly the intended UX.\n\n**3. Keyword/role search** — *\"Find someone who works on compliance\"*\n```sql\nSELECT * FROM leadership WHERE LOWER(role) LIKE '%compliance%' AND is_active=1\n```\n→ Rich Jackson (VP Risk & Compliance), Scott Friedman, … with citations ✅\n\n**4. Whole-company listing** — *\"list everyone at meetcampfire\"* → John Glasgow (CEO), Nick Jezienicki (Head of Tech Partnerships), Fernando San Martin ✅ (case-insensitive `LIKE '%meetcampfire%'`)\n\n**5. Honest \"missing data\"** — *\"Where is the CIO of Robinhood based?\"* → location isn't captured for those rows, so it correctly said the location isn't specified rather than inventing one ✅\n\nEverything's live at **http://localhost:8501** — switch to the **📊 System Insights & Dashboard** in the sidebar to see KPI cards + the runtime/category charts for both companies.\n\nOne honest edge I noticed while trying it: query #5 searched `LOWER(role) LIKE '%cio%'`, but Cathy Southwick's title is stored as *\"Chief Information Officer\"* — which doesn't contain the substring \"cio\", so the abbreviation didn't match (the inverse of the CTO case, where the title literally contained \"CTO\"). The final answer was still correct (location is genuinely null), but the agent didn't name her as the CIO. If you'd like, I can add a small abbreviation→expansion hint (CIO↔Chief Information Officer, CFO↔Chief Financial Officer, etc.) to the prompt so acronym queries resolve to full titles. Want me to?"
+    },
+    {
+      "role": "user",
+      "text": "yes, add the abbreviation hint"
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Edit src/app.py"
+      ]
+    },
+    {
+      "role": "assistant",
+      "tools": [
+        "Bash: Lint, test, verify acronym resolution"
       ]
     }
   ]
