@@ -34,23 +34,30 @@ CAMPFIRE = "meetcampfire.com"
 
 _CEO = "(lower(role) LIKE '%ceo%' OR lower(role) LIKE '%chief executive%')"
 
-# Markers that signal the agent honestly admitted it has no answer / declined.
+# Explicit refusal / "no data" phrases. Kept narrow on purpose: broad tokens like
+# "no", "not" or "leadership" match almost any normal answer and would turn these
+# checks into false passes.
 _NEGATIVE = (
-    "no ",
-    "not ",
-    "n't",
-    "none",
+    "couldn't find",
+    "could not find",
+    "couldn't locate",
     "no one",
-    "unavailable",
     "not available",
     "not listed",
     "not specified",
-    "unknown",
+    "no information",
+    "no data",
+    "don't have",
     "do not have",
-    "does not",
+    "doesn't have",
+    "does not have",
+    "unable to",
+    "can't assist",
+    "cannot assist",
+    "can't help",
     "only help",
-    "only answer",
-    "leadership",
+    "only provide",
+    "i can only",
 )
 
 Check = tuple[str, bool, str]  # (dimension, passed, detail)
