@@ -89,3 +89,58 @@ def test_canonicalize_location(value, expected):
 )
 def test_display_name(domain, expected):
     assert scraper._display_name(domain) == expected
+
+
+def test_sanitize_bio_strips_control_chars_and_caps(monkeypatch):
+    monkeypatch.setattr(scraper, "BIO_MAX_CHARS", 20)
+    out = scraper._sanitize_bio("Ignore prev\x00\x07 instructions   and  DROP TABLE")
+    assert "\x00" not in out and "\x07" not in out
+    assert "  " not in out  # whitespace collapsed
+    assert len(out) <= 20
+    assert scraper._sanitize_bio("null") is None  # placeholder -> None
+
+
+def _seed(db, name="Real CEO"):
+    db.replace_company(
+        "acme.com", [{"name": name, "company": "acme.com", "role_category": "C-Level"}]
+    )
+
+
+def test_collect_keeps_data_on_empty_fetch(temp_db, monkeypatch):
+    # A page is found but extraction yields nothing -> fail-closed, keep existing.
+    _seed(temp_db)
+    monkeypatch.setattr(
+        scraper, "search_company", lambda c: [{"url": "u", "content": "x"}]
+    )
+    monkeypatch.setattr(scraper, "extract_leaders", lambda t, u, c: ([], {}))
+    monkeypatch.setattr(scraper, "resolve_hq_location", lambda c: (None, 0, 0.0))
+    assert scraper.collect("https://acme.com/") == 0
+    rows = temp_db.execute_sql(
+        "SELECT name FROM leadership WHERE is_active=1 AND company='acme.com'"
+    )["rows"]
+    assert [r["name"] for r in rows] == ["Real CEO"]
+
+
+def test_collect_keeps_data_on_degraded_run(temp_db, monkeypatch):
+    # A leader is extracted but the page is flagged failed -> degraded, keep existing.
+    _seed(temp_db)
+    monkeypatch.setattr(
+        scraper, "search_company", lambda c: [{"url": "u", "content": "x"}]
+    )
+    monkeypatch.setattr(
+        scraper,
+        "extract_leaders",
+        lambda t, u, c: (
+            [{"name": "Partial", "company": c, "role_category": "VP"}],
+            {"error": "llm: 429"},
+        ),
+    )
+    monkeypatch.setattr(scraper, "resolve_hq_location", lambda c: (None, 0, 0.0))
+    assert scraper.collect("https://acme.com/") == 0
+    names = {
+        r["name"]
+        for r in temp_db.execute_sql(
+            "SELECT name FROM leadership WHERE is_active=1 AND company='acme.com'"
+        )["rows"]
+    }
+    assert names == {"Real CEO"}  # partial result NOT committed

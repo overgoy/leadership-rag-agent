@@ -146,3 +146,14 @@ def test_upsert_sources_dedups_urls(temp_db):
     assert n == 2  # duplicate and empty dropped
     count = temp_db.execute_sql("SELECT COUNT(*) AS n FROM sources")["rows"][0]["n"]
     assert count == 2
+
+
+def test_replace_company_refuses_empty(temp_db):
+    # Fail-closed: an empty replacement must NOT deactivate the current rows
+    # (guards against a transient empty fetch wiping good data).
+    temp_db.replace_company("acme.com", [ALICE])
+    assert temp_db.replace_company("acme.com", []) == 0
+    active = temp_db.execute_sql(
+        "SELECT COUNT(*) AS n FROM leadership WHERE company='acme.com' AND is_active=1"
+    )["rows"][0]["n"]
+    assert active == 1  # ALICE still current, untouched

@@ -18,9 +18,12 @@ Design (see .claudecode.md):
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+logger = logging.getLogger(__name__)
 
 # data/company_data.db at the project root (see .claudecode.md §7).
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "company_data.db"
@@ -257,6 +260,18 @@ def replace_company(company: str, leaders: Sequence[Mapping[str, Any]]) -> int:
     worker threads) keeps the write atomic and avoids SQLite "database is locked"
     contention (.claudecode.md §3). Returns the number of new current rows inserted.
     """
+    # FAIL-CLOSED: never deactivate current rows without a replacement. An empty
+    # `leaders` almost always means an upstream failure (search/LLM rate limit,
+    # timeout, all-pages-failed) — wiping the company's current data on that would
+    # be a data-loss bug. Callers should also gate on run health; this is the
+    # last-line guard so no caller can trigger the wipe. Returns 0, changes nothing.
+    if not leaders:
+        logger.warning(
+            "replace_company(%s): empty replacement set — keeping existing rows",
+            company,
+        )
+        return 0
+
     columns = ", ".join(_LEADER_COLUMNS)
     placeholders = ", ".join(f":{c}" for c in _LEADER_COLUMNS)
     insert_sql = f"INSERT INTO leadership ({columns}) VALUES ({placeholders})"
@@ -264,14 +279,15 @@ def replace_company(company: str, leaders: Sequence[Mapping[str, Any]]) -> int:
 
     conn = _connect(read_only=False)
     try:
-        conn.execute("BEGIN")
+        # BEGIN IMMEDIATE takes the write lock up front so two concurrent collects
+        # for the same company can't interleave their close-out + insert.
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "UPDATE leadership SET is_active = 0, valid_to = CURRENT_TIMESTAMP "
             "WHERE company = ? AND is_active = 1",
             (company,),
         )
-        if rows:
-            conn.executemany(insert_sql, rows)  # is_active=1, valid_to=NULL by default
+        conn.executemany(insert_sql, rows)  # is_active=1, valid_to=NULL by default
         conn.commit()
         return len(rows)
     except sqlite3.Error:

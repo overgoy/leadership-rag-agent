@@ -70,6 +70,15 @@ def test_thinking_filter_streams_only_answer(deltas, expected):
     assert "".join(flt.feed(d) for d in deltas) == expected
 
 
+def test_prompt_isolates_untrusted_content():
+    # The agent prompt must instruct the model to treat row values as untrusted
+    # data, not instructions (indirect prompt-injection defense).
+    prompt = app._build_system_prompt("CREATE TABLE leadership(...)", ["acme.com"])
+    low = prompt.lower()
+    assert "untrusted" in low
+    assert "never" in low and "instructions" in low
+
+
 def test_run_tool_rejects_non_select():
     content, raw = app._run_tool("DROP TABLE leadership")
     assert content.startswith("<error>")

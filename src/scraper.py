@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections import Counter
@@ -143,6 +144,23 @@ def _display_name(domain: str) -> str:
     'Robinhood'), for the companies dimension."""
     label = domain.split(".")[0].replace("-", " ").strip()
     return label.title() if label else domain
+
+
+# Cap on stored bio length (defense against indirect prompt injection — scraped
+# bios become tool output the answer LLM reads; bound their size + strip control
+# characters so a crafted page can't smuggle huge or hidden payloads downstream).
+BIO_MAX_CHARS = 1_000
+
+
+def _sanitize_bio(bio):
+    """Strip control characters and collapse whitespace, then cap length. Scraped
+    text is untrusted; keep it as compact plain data."""
+    bio = _clean_text(bio)
+    if not bio:
+        return None
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", bio)  # drop control chars
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:BIO_MAX_CHARS] or None
 
 
 class Leader(BaseModel):
@@ -495,9 +513,11 @@ def extract_leaders(
         extraction = LeadershipExtraction.model_validate(json.loads(content))
     except (ValidationError, json.JSONDecodeError, KeyError, IndexError) as exc:
         logger.warning("extraction failed for %s: %s", source_url, exc)
+        stats["error"] = f"parse: {exc}"  # mark the page failed (not "no leaders")
         return [], stats
     except Exception as exc:  # network/LLM errors — skip this page, keep going
         logger.warning("LLM error for %s: %s", source_url, exc)
+        stats["error"] = f"llm: {exc}"  # systemic failures must NOT read as empty
         return [], stats
 
     stats["candidates_extracted"] = len(extraction.leaders)
@@ -522,10 +542,16 @@ def extract_leaders(
     return leaders, stats
 
 
-def collect(url: str) -> int:
-    """End-to-end collection for a company URL. Initializes the DB, replaces any
-    existing rows for this company in one atomic transaction, and records run
-    metrics. Returns the number of leaders stored."""
+def collect(url: str, force: bool = False) -> int:
+    """End-to-end collection for a company URL. Initializes the DB, replaces this
+    company's rows in one atomic transaction (only on a healthy, non-empty run),
+    and records run metrics. Returns the number of leaders stored.
+
+    FAIL-CLOSED: if the run produced no leaders, or any page failed (rate limit /
+    timeout / parse error), the existing data is KEPT and nothing is replaced —
+    a transient upstream failure must never wipe good data. Pass ``force=True`` to
+    commit a partial result despite page failures (never overrides the empty
+    guard)."""
     company = _company_from_url(url)
     logger.info("Collecting leadership for: %s", company)
     started = time.perf_counter()
@@ -583,21 +609,43 @@ def collect(url: str) -> int:
                 ld["location"] = hq
             logger.info("backfilled %d leaders with HQ location: %s", len(missing), hq)
 
-    # Canonicalize messy department/location strings in place so re-collects and
-    # GROUP BY/filters don't fragment on case/synonym variants (.claudecode.md §2).
+    # Canonicalize messy department/location strings and sanitize bios (untrusted
+    # scraped text) in place so re-collects don't fragment GROUP BY/filters and so
+    # crafted bios can't smuggle payloads downstream (.claudecode.md §2/§4).
     for ld in collected:
         ld["department"] = _canonicalize(ld.get("department"), _DEPARTMENT_ALIASES)
         ld["location"] = _canonicalize(ld.get("location"), _LOCATION_ALIASES)
+        ld["bio"] = _sanitize_bio(ld.get("bio"))
 
-    # One atomic write from the main thread (§3): SCD-2 close-out + bulk INSERT in a
-    # single transaction, instead of many small commits from worker threads.
-    inserted = database.replace_company(company, collected)
-    logger.info("stored %d leaders for %s", inserted, company)
-
-    # Populate normalization dimensions: company (domain → display name + HQ) and
-    # the deduplicated provenance URLs with their fetch time.
-    database.upsert_company(company, _display_name(company), hq)
-    database.upsert_sources([p["url"] for p in pages], company)
+    # FAIL-CLOSED run gate: only replace existing data on a healthy, non-empty run.
+    # An empty result or any failed page (rate limit / timeout / parse error) means
+    # the fetch is untrustworthy — keep the current data rather than wiping it.
+    pages_failed = sum(1 for s in page_stats if s.get("error"))
+    if not collected:
+        logger.error(
+            "collect(%s): 0 leaders extracted (%d/%d pages failed) — keeping existing "
+            "data, not replacing",
+            company,
+            pages_failed,
+            len(pages),
+        )
+        inserted = 0
+    elif pages_failed and not force:
+        logger.error(
+            "collect(%s): %d/%d pages failed — degraded run, keeping existing data "
+            "(pass force=True to commit a partial result)",
+            company,
+            pages_failed,
+            len(pages),
+        )
+        inserted = 0
+    else:
+        # One atomic write (§3): SCD-2 close-out + bulk INSERT in a single
+        # transaction. Dimensions are populated only when we actually replaced.
+        inserted = database.replace_company(company, collected)
+        logger.info("stored %d leaders for %s", inserted, company)
+        database.upsert_company(company, _display_name(company), hq)
+        database.upsert_sources([p["url"] for p in pages], company)
 
     # Telemetry: roll up per-page stats and record one metrics row for this run.
     duration = time.perf_counter() - started
