@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS leadership (
     source_url    TEXT,                       -- provenance: where this was found
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- data vitality / freshness
     is_active     INTEGER  DEFAULT 1,         -- 1 = current, 0 = soft-deleted (historical)
-    valid_from    TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- when this record became current
+    valid_from    TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when this record became current
+    valid_to      TIMESTAMP                   -- when it was superseded (NULL = still current; SCD-2)
 );
 
 -- B-Tree indexes on the heavily filtered columns (.claudecode.md §2).
@@ -114,6 +115,26 @@ CREATE TABLE IF NOT EXISTS system_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_company ON system_metrics(company);
+
+-- Normalization dimensions (.claudecode.md §2). The leadership table stays flat
+-- (the agent queries it directly by `company` domain / `source_url`); these tables
+-- deduplicate company- and source-level facts and track data freshness.
+CREATE TABLE IF NOT EXISTS companies (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain       TEXT NOT NULL UNIQUE,        -- e.g. "robinhood.com" (join key to leadership.company)
+    display_name TEXT,                        -- e.g. "Robinhood"
+    hq_location  TEXT,                         -- resolved headquarters
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sources (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    url        TEXT NOT NULL UNIQUE,          -- deduplicated provenance URL
+    company    TEXT,                          -- company domain this source belongs to
+    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sources_company ON sources(company);
 """
 
 
@@ -143,6 +164,7 @@ _MIGRATIONS = (
     ("is_active", "ALTER TABLE leadership ADD COLUMN is_active INTEGER DEFAULT 1"),
     ("created_at", "ALTER TABLE leadership ADD COLUMN created_at TIMESTAMP"),
     ("valid_from", "ALTER TABLE leadership ADD COLUMN valid_from TIMESTAMP"),
+    ("valid_to", "ALTER TABLE leadership ADD COLUMN valid_to TIMESTAMP"),
 )
 
 
@@ -225,14 +247,15 @@ def replace_company(company: str, leaders: Sequence[Mapping[str, Any]]) -> int:
     """Atomically refresh a company's leaders in ONE transaction, preserving
     history via a **soft delete**.
 
-    Rather than hard-deleting, we flag the company's existing current rows as
-    ``is_active = 0`` (historical) and INSERT the freshly extracted leaders as
-    ``is_active = 1`` (current). This keeps an audit trail of who joined or left
-    across re-scrapes. The scraper mines pages on many threads but writes once,
-    here — doing the soft-delete + bulk INSERT in a single transaction on a single
-    connection (instead of many small commits from worker threads) keeps the write
-    atomic and avoids SQLite "database is locked" contention (.claudecode.md §3).
-    Returns the number of new current rows inserted.
+    Rather than hard-deleting, this is an SCD-2 transition: the company's existing
+    current rows are stamped ``is_active = 0`` AND ``valid_to = now`` (closing their
+    validity window), and the freshly extracted leaders are INSERTed as
+    ``is_active = 1`` with ``valid_to = NULL`` (open window). This keeps a temporal
+    audit trail of who joined or left across re-scrapes. The scraper mines pages on
+    many threads but writes once, here — doing the close-out + bulk INSERT in a
+    single transaction on a single connection (instead of many small commits from
+    worker threads) keeps the write atomic and avoids SQLite "database is locked"
+    contention (.claudecode.md §3). Returns the number of new current rows inserted.
     """
     columns = ", ".join(_LEADER_COLUMNS)
     placeholders = ", ".join(f":{c}" for c in _LEADER_COLUMNS)
@@ -243,16 +266,62 @@ def replace_company(company: str, leaders: Sequence[Mapping[str, Any]]) -> int:
     try:
         conn.execute("BEGIN")
         conn.execute(
-            "UPDATE leadership SET is_active = 0 WHERE company = ? AND is_active = 1",
+            "UPDATE leadership SET is_active = 0, valid_to = CURRENT_TIMESTAMP "
+            "WHERE company = ? AND is_active = 1",
             (company,),
         )
         if rows:
-            conn.executemany(insert_sql, rows)  # is_active defaults to 1 (current)
+            conn.executemany(insert_sql, rows)  # is_active=1, valid_to=NULL by default
         conn.commit()
         return len(rows)
     except sqlite3.Error:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+def upsert_company(
+    domain: str, display_name: str | None = None, hq_location: str | None = None
+) -> None:
+    """Insert or update a company dimension row (keyed by domain). Refreshes
+    display_name / hq_location when new non-null values are provided."""
+    conn = _connect(read_only=False)
+    try:
+        conn.execute(
+            "INSERT INTO companies (domain, display_name, hq_location) "
+            "VALUES (:domain, :display_name, :hq_location) "
+            "ON CONFLICT(domain) DO UPDATE SET "
+            "  display_name = COALESCE(excluded.display_name, display_name), "
+            "  hq_location  = COALESCE(excluded.hq_location, hq_location)",
+            {
+                "domain": domain,
+                "display_name": display_name,
+                "hq_location": hq_location,
+            },
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def upsert_sources(urls: Sequence[str], company: str) -> int:
+    """Insert provenance URLs (deduped by URL), refreshing fetched_at on re-crawl.
+    Returns the number of URLs processed."""
+    clean = [u for u in dict.fromkeys(urls) if u]  # dedupe, drop empties, keep order
+    if not clean:
+        return 0
+    conn = _connect(read_only=False)
+    try:
+        conn.executemany(
+            "INSERT INTO sources (url, company, fetched_at) "
+            "VALUES (:url, :company, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(url) DO UPDATE SET "
+            "  company = excluded.company, fetched_at = CURRENT_TIMESTAMP",
+            [{"url": u, "company": company} for u in clean],
+        )
+        conn.commit()
+        return len(clean)
     finally:
         conn.close()
 

@@ -326,9 +326,20 @@ A single `leadership` table:
 | `bio` | free text, indexed by FTS5 |
 | `linkedin_url` | if found |
 | `source_url` | provenance — where the data was found |
+| `is_active` / `valid_from` / `valid_to` | SCD-2 history: `is_active = 1`, `valid_to = NULL` is current; re-collects close the old window |
 
-B-Tree indexes on `role`, `department`, `role_category`, `company`; an FTS5 virtual table
-`leadership_fts` over `(name, bio)` kept in sync via triggers.
+B-Tree indexes on `role`, `department`, `role_category`, `company`, `is_active`; an FTS5
+virtual table `leadership_fts` over `(name, bio)` kept in sync via triggers.
+
+The table is kept **flat** so Text-to-SQL stays join-free. Two supplementary dimensions
+normalize company- and source-level facts (they are not queried by the agent):
+
+- `companies` — `domain` (unique) → `display_name`, `hq_location`
+- `sources` — deduplicated provenance `url` + `fetched_at` (data freshness)
+
+`department` and `location` are **canonicalized on write** (whitespace + a small
+synonym/alias map, e.g. `eng`→`Engineering`, `SF`→`San Francisco, CA`) so re-collects and
+`GROUP BY`/filters don't fragment on case or synonym variants.
 
 ---
 

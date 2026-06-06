@@ -53,3 +53,39 @@ def test_is_board_role_handles_none():
 def test_role_categories_match_spec():
     # §2 target scope — guards against accidental drift in the allow-list.
     assert scraper.ROLE_CATEGORIES == ("C-Level", "VP", "Head")
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("  eng ", "Engineering"),  # alias + whitespace
+        ("ENGINEERING", "Engineering"),  # case-folded synonym
+        ("GTM", "Go-to-Market"),
+        ("Risk and Compliance", "Risk and Compliance"),  # unknown: kept as-is
+        ("null", None),  # placeholder -> None
+        (None, None),
+    ],
+)
+def test_canonicalize_department(value, expected):
+    assert scraper._canonicalize(value, scraper._DEPARTMENT_ALIASES) == expected
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("sf", "San Francisco, CA"),
+        ("San Francisco", "San Francisco, CA"),
+        ("Menlo Park, CA", "Menlo Park, CA"),  # unknown form kept (no mangling)
+        ("N/A", None),
+    ],
+)
+def test_canonicalize_location(value, expected):
+    assert scraper._canonicalize(value, scraper._LOCATION_ALIASES) == expected
+
+
+@pytest.mark.parametrize(
+    "domain, expected",
+    [("robinhood.com", "Robinhood"), ("meetcampfire.com", "Meetcampfire")],
+)
+def test_display_name(domain, expected):
+    assert scraper._display_name(domain) == expected

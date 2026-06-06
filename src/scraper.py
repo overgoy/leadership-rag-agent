@@ -98,6 +98,53 @@ def _clean_text(value):
     return value
 
 
+# Canonicalization maps (lowercased key -> canonical value) so common synonyms and
+# case variants collapse to one label, keeping GROUP BY / filters clean (§2). Values
+# not in a map are kept as their whitespace-normalized original (no mangling).
+_DEPARTMENT_ALIASES = {
+    "eng": "Engineering",
+    "engineering": "Engineering",
+    "gtm": "Go-to-Market",
+    "go to market": "Go-to-Market",
+    "go-to-market": "Go-to-Market",
+    "ops": "Operations",
+    "hr": "People",
+    "human resources": "People",
+    "people ops": "People",
+    "bd": "Business Development",
+    "biz dev": "Business Development",
+    "r&d": "Research & Development",
+    "infosec": "Security",
+}
+_LOCATION_ALIASES = {
+    "sf": "San Francisco, CA",
+    "san francisco": "San Francisco, CA",
+    "nyc": "New York, NY",
+    "new york": "New York, NY",
+    "la": "Los Angeles, CA",
+    "menlo park": "Menlo Park, CA",
+    "remote": "Remote",
+}
+
+
+def _canonicalize(value, aliases):
+    """Whitespace-normalize a label and map known synonyms/case variants to a
+    canonical form; unknown values keep their original casing. Returns None for
+    empty/placeholder input."""
+    value = _clean_text(value)
+    if not value:
+        return None
+    norm = " ".join(value.split())
+    return aliases.get(norm.lower(), norm)
+
+
+def _display_name(domain: str) -> str:
+    """Best-effort human-readable company name from a domain ('robinhood.com' ->
+    'Robinhood'), for the companies dimension."""
+    label = domain.split(".")[0].replace("-", " ").strip()
+    return label.title() if label else domain
+
+
 class Leader(BaseModel):
     """A single extracted leader. Only ``name`` is required; every other field
     is Optional so a partial profile never fails validation (§3)."""
@@ -523,7 +570,7 @@ def collect(url: str) -> int:
     # Tavily search; if that yields nothing, fall back to the most common location
     # already extracted from the company's own pages (still grounded, not guessed).
     # Helps answer "where is the CEO based?" when only the HQ is known.
-    hq_tokens, hq_cost = 0, 0.0
+    hq, hq_tokens, hq_cost = None, 0, 0.0
     missing = [ld for ld in collected if not ld.get("location")]
     if missing:
         hq, hq_tokens, hq_cost = resolve_hq_location(company)
@@ -536,10 +583,21 @@ def collect(url: str) -> int:
                 ld["location"] = hq
             logger.info("backfilled %d leaders with HQ location: %s", len(missing), hq)
 
-    # One atomic write from the main thread (§3): DELETE + bulk INSERT in a single
-    # transaction, instead of many small commits from worker threads.
+    # Canonicalize messy department/location strings in place so re-collects and
+    # GROUP BY/filters don't fragment on case/synonym variants (.claudecode.md §2).
+    for ld in collected:
+        ld["department"] = _canonicalize(ld.get("department"), _DEPARTMENT_ALIASES)
+        ld["location"] = _canonicalize(ld.get("location"), _LOCATION_ALIASES)
+
+    # One atomic write from the main thread (§3): SCD-2 close-out + bulk INSERT in a
+    # single transaction, instead of many small commits from worker threads.
     inserted = database.replace_company(company, collected)
     logger.info("stored %d leaders for %s", inserted, company)
+
+    # Populate normalization dimensions: company (domain → display name + HQ) and
+    # the deduplicated provenance URLs with their fetch time.
+    database.upsert_company(company, _display_name(company), hq)
+    database.upsert_sources([p["url"] for p in pages], company)
 
     # Telemetry: roll up per-page stats and record one metrics row for this run.
     duration = time.perf_counter() - started

@@ -109,3 +109,40 @@ def test_bad_sql_returns_error_not_raise(temp_db):
     res = temp_db.execute_sql("SELECT * FROM no_such_table")
     assert "error" in res
     assert "no_such_table" in res["error"]
+
+
+def test_replace_company_is_scd2(temp_db):
+    temp_db.replace_company("acme.com", [{"name": "Old CEO", "company": "acme.com"}])
+    temp_db.replace_company("acme.com", [{"name": "New CEO", "company": "acme.com"}])
+    rows = temp_db.execute_sql(
+        "SELECT name, is_active, valid_to FROM leadership ORDER BY id"
+    )["rows"]
+    # Superseded row: inactive with a closed validity window.
+    assert rows[0]["name"] == "Old CEO"
+    assert rows[0]["is_active"] == 0 and rows[0]["valid_to"] is not None
+    # Current row: active with an open window.
+    assert rows[1]["name"] == "New CEO"
+    assert rows[1]["is_active"] == 1 and rows[1]["valid_to"] is None
+
+
+def test_upsert_company_dedups_and_refreshes(temp_db):
+    temp_db.upsert_company("acme.com", "Acme", None)
+    temp_db.upsert_company("acme.com", None, "Berlin")  # refresh hq, keep name
+    rows = temp_db.execute_sql(
+        "SELECT domain, display_name, hq_location FROM companies"
+    )["rows"]
+    assert len(rows) == 1  # one row per domain (UNIQUE)
+    assert rows[0] == {
+        "domain": "acme.com",
+        "display_name": "Acme",
+        "hq_location": "Berlin",
+    }
+
+
+def test_upsert_sources_dedups_urls(temp_db):
+    n = temp_db.upsert_sources(
+        ["https://a.com/x", "https://a.com/x", "https://a.com/y", ""], "a.com"
+    )
+    assert n == 2  # duplicate and empty dropped
+    count = temp_db.execute_sql("SELECT COUNT(*) AS n FROM sources")["rows"][0]["n"]
+    assert count == 2
