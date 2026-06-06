@@ -412,6 +412,5 @@ the unit suite stays offline.
 ├── .env.example         # template for API keys
 ├── Dockerfile           # optional: containerized deploy of the Streamlit app
 ├── pyproject.toml       # ruff lint/format configuration
-├── session.json         # Claude Code build export (tracked deliverable)
 └── Makefile
 ```

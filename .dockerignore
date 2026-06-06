@@ -10,5 +10,4 @@ data/
 .env
 tests/
 conftest.py
-session.json
 *.md

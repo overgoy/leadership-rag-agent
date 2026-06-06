@@ -67,4 +67,4 @@ import sqlite3; from src import database as d
 sqlite3.connect(d.DB_PATH).execute("PRAGMA wal_checkpoint(TRUNCATE);")
 ```
 
-`session.json` is a committed deliverable (a redacted export of the build session). `make collect` is idempotent per company; re-collecting is non-deterministic (LLM + live search), so leader counts vary slightly between runs.
+`make collect` is idempotent per company; re-collecting is non-deterministic (LLM + live search), so leader counts vary slightly between runs.
